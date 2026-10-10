@@ -7,6 +7,13 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Normal launches share the guarded tray entry point. Explicit legacy setup
+# switches below are retained for upstream maintenance workflows only.
+if (-not $CpuOnly -and -not $SetupImages -and -not $SetupOllama) {
+  Start-Process -FilePath (Join-Path $PSScriptRoot '..\DungeonCrawler.exe') -WindowStyle Hidden
+  exit 0
+}
+
 $Repo = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Repo
 

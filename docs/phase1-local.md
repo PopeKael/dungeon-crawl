@@ -16,7 +16,7 @@ DEFAULT_IMAGE_BACKEND=manual
 
 `OPENROUTER_MAX_TOKENS` is upstream's existing output-cap variable for all custom providers. The model must already exist; verify with `ollama list`.
 
-Run from `F:\AI\DungeonCrawler`:
+The current installation is `F:\AI\DungeonCrawler`; fresh clones can use their own directory. Normal Windows operation now uses [DungeonCrawler.exe and the guarded tray](windows-launcher.md). These terminal commands remain a development alternative:
 
 ```powershell
 npm install
@@ -47,7 +47,7 @@ History compaction uses that same context setting, reserving at least 8,192 toke
 
 Run `node scripts/verify-ollama-context.mjs` to verify request routing, allocation, retry behavior and history budgeting with mocked upstream responses and no database writes. To adjust allocation, edit only this project's `LOCAL_TEXT_CONTEXT` and restart Dungeon Crawl; do not change shared Ollama configuration. Reverting to 4096 would restore the diagnosed long-story truncation risk.
 
-To reverse the feature, use the existing local backend choice or disable image requests. Remove the two new optional environment settings to restore stock defaults. Source changes remain uncommitted on the Phase 1 branch for review; `main` is untouched.
+To reverse manual delivery, choose an existing local image backend or disable image requests. Keep explicit context allocation for long Qwen stories. Source is checkpointed on `phase1-text-manual-images`; `main` remains unchanged. Removing environment defaults does not clear saved story or app-wide settings.
 
 The retained acceptance story can be checked without making another model call:
 

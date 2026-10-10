@@ -54,3 +54,7 @@ next-env.d.ts
 
 # packaging
 /dist
+/DungeonCrawler.exe
+
+# Machine-specific launcher URL and readiness policy; copy the public example.
+/config/launcher.json

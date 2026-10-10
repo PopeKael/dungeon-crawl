@@ -3,6 +3,8 @@
 The Text Model panel in the sidebar picks the provider and model per story.
 Narration streams in as the model writes it on every provider.
 
+**Dungeon Crawl checkpoint:** the tested Windows narrator is Qwen 3.5 4B from the [Ollama library](model-library.md), with explicit 65,536-token allocation for native Ollama and matching custom URLs. See [context configuration](phase1-local.md) and [current measurements](../PROJECT-STATUS.md). Gemma examples and Apple benchmarks below are retained upstream reference material, not fresh acceptance tests or this installation's defaults.
+
 ## Local models (Ollama)
 
 The app uses the Gemma 4 quantization-aware-trained (QAT, Q4_0) builds, which
@@ -28,7 +30,7 @@ stream per-layer embeddings, so they sit below their download size):
 | 12B | 7.2 GB | 7.7 GB | 256K | 21 tok/s | 11.5 s | ~9 s |
 | 26B MoE | 16 GB | 15 GB | 256K | 48 tok/s | 4.7 s | ~30 s |
 
-The app runs each model at its full native context window by default. Gemma 4
+Without a `LOCAL_TEXT_CONTEXT` override, non-Windows local inference uses the configured model's native window; Windows defaults to 65,536 tokens. An explicit override takes precedence. Gemma 4
 uses sliding-window attention for most layers, so the KV cache stays small —
 the 12B measured ~7.6 GB of RAM even with 50K+ tokens of story in context.
 
@@ -79,9 +81,7 @@ oldest passages are evicted in blocks of 16 — keeping the prompt prefix
 append-only so Ollama's prompt cache makes each turn pay only for its new
 tokens — and the evicted passages are folded into a rolling "story so far"
 summary (the same handoff-summary approach Codex CLI uses for context
-compaction, adapted for fiction). The narrator keeps plot threads, character
-details, debts, and secrets even after the raw text has scrolled out of
-context.
+compaction, adapted for fiction). The summary prompt asks the narrator to preserve plot threads, characters, debts and secrets after raw text leaves context. This is best-effort generated memory, not guaranteed recall. Summary generation precedes narration and can add an initial wait. The current 64K acceptance story has not reached this boundary.
 
 Deep prefill is the one real cost of huge contexts (~160 tok/s at 50K depth
 on the 12B), and it only bites when the cache goes cold on a very long story;

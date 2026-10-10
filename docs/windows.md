@@ -2,18 +2,11 @@
 
 ## Launching
 
-Double-click `Launch-Windows.bat` in the repo root. The launcher checks
-Node.js, installs app dependencies, builds Open Dungeon when needed, and
-starts http://localhost:3000. If the app is already running, the same
-launcher lets you open it, stop it, or restart it.
+Normal Dungeon Crawl launches use **DungeonCrawler.exe** or its Desktop/Start-menu shortcut. `Launch-Windows.bat` now forwards to that EXE; it must be built first. Follow the [Windows executable guide](windows-launcher.md) for build, local configuration, readiness policy and tray controls. **Exit** stops the owned web process and closes the tray, leaving shared Ollama running.
 
-Ollama is optional: the launcher only installs, starts, or pulls the default
-model if you type `Y` at the prompt. If you skip it, open **Text Model** in
-the app and choose **Connect a server** for LM Studio, llama.cpp, OpenRouter,
-a remote Ollama, or another OpenAI-compatible backend.
+The tested profile is Qwen 3.5 4B, 64K context and manual illustration prompts. It does not install models or image dependencies. A terminal web launch can use other compatible backends; see [Phase 1 local configuration](phase1-local.md).
 
-To stop the web app and image worker, double-click `windows\Stop-Windows.bat`;
-it leaves Ollama running by default because you may use it for other apps.
+The sections below describe retained upstream maintenance/image tooling, which is separate from the guarded EXE. Explicit `-SetupImages`, `-SetupOllama` and `-CpuOnly` switches retain those paths. Avoid image setup/smoke commands during text/manual-image play. The separate upstream `windows\Stop-Windows.bat` also manages image workers; use tray Stop or Exit for the current game's owned web process.
 
 ## Image setup
 

@@ -1,52 +1,65 @@
-# Dungeon Crawler — checkpoint 10 October 2026
+# Dungeon Crawl: Local Interactive Storyteller — checkpoint 10 October 2026
 
-## Current state
+## Repository and deployment
 
-Repository: https://github.com/PopeKael/dungeon-crawl. Branch: `phase1-text-manual-images`.
-Independent Windows project at `F:\AI\DungeonCrawler`; Ariadne is not a runtime dependency and was not changed.
+Repository: [PopeKael/dungeon-crawl](https://github.com/PopeKael/dungeon-crawl). Development branch: `phase1-text-manual-images`. Based on [Open Dungeon by newideas99](https://github.com/newideas99/open-dungeon); the original MIT licence and copyright notice are preserved. The repository name and `main` remain unchanged. This checkpoint includes the previously uncommitted Windows launcher and the documentation refresh; it does not implement the next feature.
 
-The production app runs on `http://127.0.0.1:3000`, served privately at `https://dungeon.dia.net.au` through Synology. Restarted into the verified build (PID 30648 at this checkpoint). No automatic startup task has been installed.
+Independent Windows project at `F:\AI\DungeonCrawler`. Ariadne is not a runtime dependency and was not changed. Canonical start point: `DungeonCrawler.exe`, also installed as **Dungeon Crawl** on Desktop and in the Start menu. The native tray requires adjacent Node application, scripts, assets, configuration and data. It is built locally, not distributed as an installer or release binary.
 
-Default narrator: `qwen3.5:4b`, selected from the existing Ollama library. This project's ignored `.env.server` requests a 65,536-token context, disables thinking, caps custom replies at 2,048 tokens and defaults to manual image prompts. Saved story settings take precedence over environment defaults.
+Production binds to `http://127.0.0.1:3000`; this installation uses private `https://dungeon.dia.net.au` through Synology and its NAS-only Windows bridge. No automatic startup task is installed. Exit stops the launcher-owned web process and closes the tray; shared Ollama remains running. The last lifecycle check left the game exited.
 
-## Completed
+The active narrator is `qwen3.5:4b`, selected from the installed Ollama library. Ignored `.env.server` requests 65,536 tokens, disables thinking, caps custom replies at 2,048 tokens and defaults to manual image prompts. Saved story and app-wide settings can override environment defaults. Ignored `config/launcher.json` preserves the machine policy; `config/launcher.example.json` is the portable starting point.
 
-- Manual illustration requests: actual model tool calls persist as selectable prompts with reason, aspect, character references and Copy prompt; local image generation is blocked in manual mode.
-- Speechify Speak control beneath each narrator passage: selects prose and sends saved passage IDs to the independent Windows clipboard/Alt+F1 helper. Warren confirmed audible playback through HTTPS.
-- Private HTTPS: dedicated DNS name, Synology certificate/proxy and desktop-only access rule; NAS-only Windows bridge to the loopback app. Existing services preserved.
-- Entrance with title and instructions, Current story, Resume, New story and a separate story setup view.
-- Save & return below Font Size; completed messages remain in SQLite, while unsent input and reading position use a browser bookmark. Resume does not advance narration.
-- Installed Ollama text-model selector with Refresh and manual entry fallback.
-- Explicit per-request 64K allocation: custom connections matching the configured Ollama library now use native `/api/chat`; history budgeting follows that allocation. No shared/global Ollama settings changed.
-- Visible Delete story controls on the entrance for current and other stories, reusing the sidebar's confirmation dialog and deletion API. The confirmation names the story and warns that messages, characters and story memory are permanently removed. Successful deletion removes its browser bookmark; deleting the selected story returns home without opening another story.
+## Currently implemented
 
-## Verification and cleanup
+| Area | Working behaviour and boundary |
+|---|---|
+| Story experience | Entrance/title/instructions, New story, Current story, Resume and separate setup view. Typed Do / Say / Story, Continue, Retry, Erase and passage editing. Fantasy, Mystery, Cyberpunk, Apocalyptic, Horror, Romance and custom openings. |
+| Text providers | Local Ollama and custom OpenAI-compatible routes. Installed completion-model picker with Refresh and manual entry. Local testing covers Qwen 3.5 4B and 9B; other endpoints retain their existing provider route. |
+| Streaming | Progressive narration deltas over NDJSON; reasoning/tool artefacts filtered from prose. Model loading, prompt prefill and compaction can delay the first token. |
+| Persistence | SQLite stories, messages, settings, characters, image requests and summaries. Save & return also stores unsent input/reading position as a browser bookmark; Resume does not advance narration. |
+| Deletion | Visible named destructive confirmation; deletion removes related records and browser bookmark. Deleting the selected story returns home. |
+| Characters | Saved descriptions, portraits, inventory, skills and spells enter the narrator prompt. Editable fields, not automatic inventory transactions or a complete rules engine. |
+| Long-story memory | Older passages outside the history budget fold into a persisted rolling summary. Best-effort summarisation retains the prior summary on failure; not guaranteed recall. The acceptance story has not triggered compaction at 64K. |
+| Images | Actual image-tool calls persist with prompt, reason, aspect and character references, shown as selectable text with Copy prompt. Manual mode refuses local rendering. Retained upstream local-image/ComfyUI paths are present but not accepted on this Windows hardware in this checkpoint. |
+| Voice | Speak selects a completed passage; an independent Windows helper retrieves saved passage IDs, writes the clipboard and sends fixed Alt+F1. Warren confirmed audible Speechify playback over HTTPS. No built-in local TTS, speech input or automatic narrator playback. |
+| Windows lifecycle | Native EXE, icon/favicon, Desktop/Start-menu shortcuts and application ID. GPU/VRAM/RAM readiness checks. Start/Restart/Stop/Exit validate the owned web process identity. Startup policy covers 4B/64K/manual images and holds unknown profiles. |
 
-- `npm run lint`, `npm run build`, `git diff --check` passed.
-- `node scripts/verify-ollama-context.mjs`: native 64K payload, selected model, output limit, auth preservation, retries, streaming/non-streaming, history budget and other-provider isolation passed using mocked upstream requests.
-- `node scripts/verify-phase1.mjs 15f4b699-0db3-4b66-a3e5-5b1694eabdbb`: saved manual prompt, character reference, continuation, manual rendering guard and SQLite integrity passed.
-- Browser verification through HTTPS: entrance delete controls, named confirmation and Cancel preserving the story. API deletion of the two diagnostic stories returned success, subsequent reads/deletes returned 404, related messages/characters were removed, and SQLite integrity remained `ok`. Reload showed only Wazza's story. The final destructive confirmation click was not used for this UI check; cleanup used the same application delete API.
-- Wazza Fantasy remains at 44 messages and one character, unchanged by context verification and cleanup. No new main-story narration was generated for this checkpoint.
-- Diagnostic story IDs removed: `3bcf979c-75aa-425c-9408-73b5ca437152` and `a67aeecf-aaae-4f53-8dee-e71141681ed3`.
-- Local pre-cleanup backup: ignored `logs/before-test-story-cleanup.sqlite`. Evidence: ignored `logs/story-delete-verification.json`, `logs/story-delete-home.png`, `logs/stream-diagnosis/`.
+## Context diagnosis and measured performance
 
-## Context diagnosis
+The old custom Ollama route left allocation at **4,096 tokens**. The existing-story request used **4,023 prompt tokens**, leaving only **73 generation tokens**. Ollama finished at the limit with a mid-sentence result. Prefill caused the initial delay; a continuing mid-stream stall was not reproduced. Prompt assembly took about 2 ms; observed content gaps were 14–22 ms. No old 9B residency or repeated 4B loading loop was observed during story tests.
 
-The old route left Ollama at 4,096 tokens. The long story used 4,023 prompt tokens plus 73 generated tokens, exhausting that window. Prefill caused the initial wait; generation and browser/proxy streaming were smooth. Controlled native decode measured roughly 99–100 tokens/sec for 4B and 70 tokens/sec for warm 9B.
+The fix routes custom URLs matching the configured Ollama server through native `/api/chat`, explicitly supplying `options.num_ctx=65536` for narration and summaries. History budgeting follows the allocation. Selected model, tools, reply cap and credentials are preserved; other servers retain their route. No global Ollama configuration or other project was changed.
 
-After correction, Ollama confirmed `n_ctx_slot=65536`, a 4,400-token prompt and no truncation. Warm HTTPS replay began in 153 ms, completed in 1,719 ms, and had a longest chunk gap of 13 ms. Native decode was 94.36 tokens/sec. Resident memory was 5,608,885,451 bytes, entirely GPU. First text after changing allocation took 8.8 seconds while the model reloaded. Manual image-tool generation also passed; that request produced a tool-only response and the existing placeholder narration.
+| Controlled measurement on RX 7800 XT | Result |
+|---|---|
+| 4B short-prompt decode at 4K, warm | 98.50–100.08 tokens/sec |
+| 9B short-prompt decode at 4K, warm | 70.07 tokens/sec |
+| 4B GPU allocation at 4K | 3,130,009,844 bytes (~3.13 GB / 2.92 GiB) |
+| 4B decode after the 64K fix | 94.36 tokens/sec |
+| 4B resident allocation at 64K, fully on GPU | 5,608,885,451 bytes (~5.61 GB / 5.22 GiB) |
+| Warm 64K HTTPS replay | First delta 153 ms; total 1,719 ms; longest chunk gap 13 ms |
 
-History budgeting remains an English-prose estimate, not exact token admission. Extremely large instructions, attachments or individual passages may exceed the budget. Browser tooling did not expose raw DevTools Network chunks; direct HTTP body timing and DOM growth independently verified streaming. External-client denial and Speechify word highlighting were not independently tested.
+The short-prompt comparison used the same prompt, seed, temperature, 4K context and thinking disabled. The 64K measurement is a different story workload, not a matched 64K 9B comparison. Changing allocation caused a model reload and an 8.8-second first-text wait. These are local observations, not universal requirements. Warm localhost/HTTPS traces did not identify proxy buffering as a cause.
 
-## Documentation and next session
+History allowance is approximately 185,794 characters at the 2,048-token reply cap, reserving at least 8,192 tokens plus a 10% margin. This is an English-prose estimate, not exact admission; oversized instructions, attachments or passages can exceed it. The application still does not expose context-limit finish reasons as a dedicated warning.
 
-- [Local setup and context policy](docs/phase1-local.md)
-- [Speechify and private HTTPS, including reversal](docs/speechify-https.md)
-- [Save, resume and delete](docs/save-resume.md)
-- [Model library](docs/model-library.md)
+## Verification and retained evidence
 
-Local SQLite stories, backups, logs, generated/uploaded files and `.env.server` are ignored and are not part of the GitHub checkpoint. Back up the local data directory separately; stop the app first or use SQLite's online backup mechanism.
+This checkpoint passed `npm run lint`, `npm run build`, `npm run check:windows-launchers`, `npm run check:image-routing` and `npm run check:image-server-http` (fake rendering fixture; no GPU image generation). The native EXE rebuilt successfully. `scripts/verify-dungeon-launcher.ps1` passed nine readiness scenarios and script syntax; `node scripts/verify-ollama-context.mjs` passed routing, allocation, retry, streaming/non-streaming, output/auth preservation and history-budget checks with mocked upstream responses. `node scripts/verify-reader.mjs` passed six rejected-request boundaries without clipboard/key events. `node scripts/verify-phase1.mjs` verified saved character/image references, manual-render refusal and SQLite integrity without narration. A guarded cold start with no resident model restored 4B/64K and private HTTPS; the temporary server was stopped after checks. The final handoff records the exact pushed commit.
 
-Next session: resume normal play and assess longer sessions. No further optimization is pending for tonight.
+Native controls already verified: Readiness, Start, Stop, Restart, private HTTPS restoration, duplicate EXE launch retaining one tray/web PID, and closing/restoring the status window. Revised Exit passed while stopped and running, leaving zero tray processes, zero port-3000 listeners and no ownership file; shared Ollama stayed resident. Status window and favicon were visually inspected.
 
-Ariadne follow-up, unverified: when working in that separate project later, audit whether each inference route explicitly requests its intended context allocation and aligns history budgeting. This note does not establish that Ariadne has the same defect.
+Saved Wazza Fantasy remains at **44 messages and one character**, SQLite integrity `ok`. No narration is generated for this documentation checkpoint. Two diagnostic stories were deleted after a local backup. Delete UI checks verified named confirmation and Cancel; cleanup used the delete API rather than clicking final confirmation. The story summary is still empty, so long-session summary quality remains unverified.
+
+Ignored evidence: `logs/stream-diagnosis/`, `logs/phase1-persistence.json`, `logs/story-delete-verification.json`, `logs/launcher-last-*.json`, control screenshots and `logs/before-test-story-cleanup.sqlite`. Raw story text, diagnostics and databases are not published. Browser tooling did not expose DevTools Network body-read logs; progressive HTTP reads, backend timings and DOM growth are the available streaming evidence. External-client denial and Speechify word highlighting were not independently tested.
+
+## Next checkpoint and operating notes
+
+**Next: local multi-participant identity**, specified in [ROADMAP.md](docs/ROADMAP.md): participant and optional linked character on each new input, explicit history/prompt identity, legacy compatibility and a frictionless single-player path. Implementation has not begun. Accounts, Discord transport and remote multiplayer are deferred.
+
+The entertainment, lore-pack and narrative-rules direction is in [PRODUCT-VISION.md](docs/PRODUCT-VISION.md). World packs, integrated local voices, speech input and robust automatic state updates are roadmap items. No proprietary setting material is included.
+
+Procedure owners: [local text/context](docs/phase1-local.md), [Windows launcher](docs/windows-launcher.md), [Speechify/HTTPS](docs/speechify-https.md), [save/resume/delete](docs/save-resume.md), [model library](docs/model-library.md).
+
+Stories, credentials, local launcher policy, build outputs, EXE binaries, uploads/generated content and logs stay ignored. GitHub is a source checkpoint, not a story backup. Back up data with the app stopped, or use SQLite's online backup mechanism. An Ariadne context audit remains an unverified note for that separate project; this checkpoint makes no claim about its configuration.

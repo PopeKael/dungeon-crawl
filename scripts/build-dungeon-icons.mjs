@@ -1,0 +1,20 @@
+import fs from 'node:fs';
+import sharp from 'sharp';
+const svg = fs.readFileSync('assets/dungeon.svg');
+const sizes = [16, 32, 48, 256];
+const images = await Promise.all(sizes.map(size => sharp(svg).resize(size, size).png().toBuffer()));
+const header = Buffer.alloc(6 + sizes.length * 16);
+header.writeUInt16LE(1, 2); header.writeUInt16LE(sizes.length, 4);
+let offset = header.length;
+images.forEach((png, i) => {
+  const entry = 6 + i * 16;
+  header[entry] = sizes[i] === 256 ? 0 : sizes[i]; header[entry + 1] = header[entry];
+  header.writeUInt16LE(1, entry + 4); header.writeUInt16LE(32, entry + 6);
+  header.writeUInt32LE(png.length, entry + 8); header.writeUInt32LE(offset, entry + 12);
+  offset += png.length;
+});
+const ico = Buffer.concat([header, ...images]);
+fs.writeFileSync('assets/dungeon.ico', ico);
+fs.writeFileSync('src/app/favicon.ico', ico);
+fs.writeFileSync('assets/dungeon.png', await sharp(svg).resize(256, 256).png().toBuffer());
+console.log('Built matching tray, shortcut and browser icons.');

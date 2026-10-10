@@ -1,97 +1,58 @@
-# Open Dungeon
+# Dungeon Crawl: Local Interactive Storyteller
 
-The first **easy-to-use, fully local** AI roleplay app. The story and the
-**inline scene images** are both generated on your own machine — no accounts,
-no API keys, no cloud, no GPU rig. Your stories never leave your computer.
+A local interactive audiobook and illustrated story engine with AI narration, persistent characters, player-driven adventures, voice, and scene art.
 
-![A story scene with an inline generated image](docs/hero.png)
+**Based on [Open Dungeon by newideas99](https://github.com/newideas99/open-dungeon).** This fork preserves the [MIT licence](LICENSE) and original copyright attribution. Development currently lives on [`phase1-text-manual-images`](https://github.com/PopeKael/dungeon-crawl/tree/phase1-text-manual-images).
 
-- **Local text generation** via [Ollama](https://ollama.com) (Gemma 4 QAT),
-  or **Connect a server** to any OpenAI-compatible backend — llama.cpp,
-  LM Studio, vLLM, a remote Ollama, OpenRouter. Narration **streams in real
-  time** as the model writes.
-- **Local image generation** — the narrator calls a `generate_image` tool and
-  scenes render inline: FLUX.2-klein on Apple Silicon / NVIDIA / supported
-  AMD Radeons, or point the app at your own **ComfyUI** instance.
-- **Full play controls** — Do / Say / Story input, Continue, Retry, Erase,
-  and inline Edit on any passage. Quick-start presets write a custom opening.
-- **Long-story memory** — history fills the model's context window
-  (128K–256K), and older passages compact into a rolling "story so far"
-  summary instead of being forgotten.
-- **Characters with visual continuity** — saved portraits feed both the
-  narrator (vision context) and the image generator (reference images).
-- **Private by design** — everything lives in a local SQLite database and
-  folders on your disk. Play from your phone over Tailscale.
+The idea is a book created while you play and listen: choose an action, let the storyteller advance the scene, then decide what happens next. The same opening can become a different adventure each time. Our direction centres on story, meaningful choices and continuity across sessions.
 
-<table>
-  <tr>
-    <td><img src="docs/prose.png" alt="Serif story prose" /></td>
-    <td><img src="docs/modal.png" alt="New story dialog with setting presets" /></td>
-  </tr>
-</table>
+## Currently working
 
-## Quick start
+- **Streaming narration:** local Ollama and custom OpenAI-compatible text backends, with an installed Ollama model selector. The tested Windows narrator is `qwen3.5:4b` with an explicit **65,536-token context**.
+- **Saved adventures:** a home screen with New story, Current story and Resume; automatic SQLite persistence, Save & return, and confirmed story deletion. Do / Say / Story, Continue, Retry, Erase and passage editing are available.
+- **Characters:** saved descriptions, portraits, inventory, skills and spells are included in the narrator's context. These are editable fields; automatic transactional world-state management is still a future step.
+- **Long-story memory:** context budgeting and a stored rolling summary fold older passages into story memory. Compaction is best-effort and can delay the next passage before streaming begins; it is not perfect recall.
+- **Narration through Speechify:** Speak beneath a completed passage selects its prose and hands it to the installed Windows reader using Alt+F1. Audible playback has been confirmed over private HTTPS. This is a manual reader handoff, not built-in local speech generation or speech input.
+- **Illustration requests:** the narrator can save scene prompts with aspect and character references for manual copying. Upstream local image/ComfyUI paths remain available; this Windows checkpoint uses **Manual prompt only**, with no automatic local rendering.
+- **Story openings:** Fantasy, Mystery, Cyberpunk, Apocalyptic, Horror and Romance presets, plus a custom scenario.
+- **Windows application:** `DungeonCrawler.exe`, Desktop/Start-menu shortcuts, an icon and native tray controls. Startup checks GPU activity, VRAM and RAM. **Exit stops the owned web process and closes the tray.** The guarded startup profile currently covers 4B / 64K / manual illustrations.
 
-**Mac (Apple Silicon):** grab the DMG from
-[Releases](https://github.com/newideas99/open-dungeon/releases), drag
-**Open Dungeon** to Applications, and open it (right-click → Open the first
-time — it's unsigned). It walks you through everything, including choosing
-Ollama or your own server as the narrator.
+On the tested RX 7800 XT, controlled short-prompt decode measured roughly **99–100 tokens/sec for 4B versus 70 for 9B** at 4K context. The corrected 64K run measured about **94 tokens/sec**, with **5.61 GB (5.22 GiB)** of resident GPU memory. The earlier ~3.1 GB figure was the 4K allocation. These are local measurements, not hardware-independent requirements; see [checkpoint evidence and limits](PROJECT-STATUS.md).
 
-**Windows:** download the release zip (or clone), then double-click
-`Launch-Windows.bat`. It checks Node.js, builds the app, and starts
-http://localhost:3000. Ollama and image generation are optional prompts —
-see the [Windows guide](docs/windows.md).
+## Run locally
 
-**From a clone (any OS):**
+On the existing Windows installation, launch **Dungeon Crawl** from Start or Desktop, or run `F:\AI\DungeonCrawler\DungeonCrawler.exe`. It opens the game in the default browser after readiness checks. Keep the EXE alongside its project files.
 
-```bash
-git clone https://github.com/newideas99/open-dungeon && cd open-dungeon
+For a fresh checkout, use Node.js 22+ and an already installed Ollama model:
+
+```powershell
+git clone --branch phase1-text-manual-images https://github.com/PopeKael/dungeon-crawl.git
+cd dungeon-crawl
 npm install
-
-# optional, only if you want the bundled Ollama provider
-ollama pull gemma4:12b-it-qat
-
-npm run dev
 ```
 
-Open http://localhost:3000 and start writing. Node.js 22+ required; text
-play needs no other setup.
+Create your local `.env.server` from the [tested text/manual-image configuration](docs/phase1-local.md), then follow the [Windows EXE build and shortcut instructions](docs/windows-launcher.md). The EXE is built locally; this checkpoint does not publish an installer or downloadable Windows release. A terminal alternative after configuration is `npm run build` followed by `npm run start -- --hostname 127.0.0.1 --port 3000`.
 
-## Playing
+Stories and settings stay in the local `data/` directory, which Git does not back up. Local text generation needs no cloud account. Remote providers and external readers have their own data handling; choosing them changes where content goes. The tested Speechify route uses private HTTPS through Synology. The app has no user authentication: keep it private and use the [deployment guide](docs/speechify-https.md) for reader setup.
 
-The composer has three input modes — **Do** (a player action), **Say**
-(dialogue), and **Story** (write narration yourself) — plus **Continue**,
-**Retry**, and **Erase** above it. Hover any message and hit **Edit** to
-rewrite it in place. Everything saves to the local database as you go.
+## Direction / roadmap
 
-## Guides
+The next feature is **local participant identity**: select who acts, optionally link them to a story character, preserve that identity in history and explicitly tell the narrator. Existing single-player stories must remain compatible. Accounts, Discord transport and remote multiplayer are outside that first pass.
 
-| Guide | Covers |
+Later work includes interchangeable user-supplied world/lore packs, stronger structured world-state continuity, integrated local voices and speech input, and illustrated-book scene plates at important moments. These are goals, not completed features. Mechanical resolution should serve the story, with earned consequences and continuity for established characters.
+
+Read the fuller [product vision](docs/PRODUCT-VISION.md), the ordered [roadmap](docs/ROADMAP.md), or the [current project status](PROJECT-STATUS.md).
+
+## Guides and attribution
+
+| Guide | Purpose |
 |---|---|
-| [Text backends](docs/text-backends.md) | Gemma 4 model choices and benchmarks, Connect a server, long-story memory |
-| [Image generation](docs/image-generation.md) | FLUX worker setup, ComfyUI backend, AMD GPUs, the story image tool |
-| [Windows](docs/windows.md) | Launcher details, image smoke tests, diagnostics, tuning |
-| [Configuration](docs/configuration.md) | Environment variables, playing from your phone, local data |
+| [Local text and 64K context](docs/phase1-local.md) / [model library](docs/model-library.md) | Tested Qwen configuration, history budget and model selection |
+| [Windows executable](docs/windows-launcher.md) | Build, shortcuts, readiness policy and lifecycle controls |
+| [Speechify and private HTTPS](docs/speechify-https.md) | Reader handoff and deployment boundaries |
+| [Save, resume and delete](docs/save-resume.md) | Story persistence and bookmarks |
+| [Text backends](docs/text-backends.md) / [image generation](docs/image-generation.md) | Retained upstream provider and image options; platform-specific testing differs |
 
-## Content note
+Open Dungeon's original work is by **newideas99 (Jacob Ferrari)**. The original MIT copyright notice remains intact. This fork is independently developed by Warren “Wazza” Gerdes / PopeKael. Any retained GitHub Sponsor or Ko-fi links support the **original Open Dungeon maintainer**. No proprietary world or setting source material is distributed here.
 
-This app is built for private, local fiction. The default narrator prompt
-permits consensual adult content between adults; everything is generated and
-stored only on your machine. Edit the system prompt in
-`src/lib/story-prompt.ts` if you want different defaults.
-
-## Support the project
-
-Open Dungeon is free and MIT-licensed, and it always will be. If it earns a
-spot on your machine and you want to help with development, a tip goes a
-long way:
-
-- **[Sponsor on GitHub](https://github.com/sponsors/newideas99)**
-- **[Buy me a coffee on Ko-fi](https://ko-fi.com/opendungeon)**
-
-Starring the repo and sharing it helps too.
-
-## License
-
-MIT
+The inherited narrator prompt permits consensual adult fiction between adults. Review the prompt and choose suitable content boundaries for your own private sessions.
