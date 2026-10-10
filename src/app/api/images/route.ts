@@ -13,7 +13,7 @@ const requestSchema = z.object({
   messageId: z.string().optional(),
   prompt: z.string().min(1),
   mode: z.enum(["fast", "slow"]).default("slow"),
-  backend: z.enum(["mflux-hs", "sdnq-hs", "comfyui"]).default("mflux-hs"),
+  backend: z.enum(["mflux-hs", "sdnq-hs", "comfyui", "manual"]).default("mflux-hs"),
   aspect: z.enum(["square", "portrait", "landscape"]).default("square"),
   comfyUrl: z.string().trim().max(500).default(""),
   comfyCheckpoint: z.string().trim().max(300).default(""),
@@ -33,6 +33,12 @@ const requestSchema = z.object({
 
 export async function POST(request: Request) {
   const body = requestSchema.parse(await request.json());
+  if (body.backend === "manual") {
+    return Response.json(
+      { error: "Manual prompt mode does not run an image backend. Copy the prompt from the story." },
+      { status: 409 },
+    );
+  }
   const references = body.references.slice(0, MAX_IMAGE_REFERENCES);
 
   // ComfyUI runs its own server; the app talks to it directly and saves the

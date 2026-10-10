@@ -15,7 +15,7 @@ const settingsSchema = z.object({
   customModel: z.string().optional(),
   customApiKey: z.string().optional(),
   imageMode: z.enum(["fast", "slow"]).optional(),
-  imageBackend: z.enum(["mflux-hs", "sdnq-hs", "comfyui"]).optional(),
+  imageBackend: z.enum(["mflux-hs", "sdnq-hs", "comfyui", "manual"]).optional(),
   comfyUrl: z.string().optional(),
   comfyCheckpoint: z.string().optional(),
   aspect: z.enum(["square", "portrait", "landscape"]).optional(),

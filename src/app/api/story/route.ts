@@ -9,6 +9,7 @@ import {
   updateChatTitleFromInput,
 } from "@/lib/db";
 import { serverEnv } from "@/lib/server-env";
+import { isConfiguredOllama, ollamaHistoryCharBudget } from "@/lib/ollama-routing";
 import {
   buildStoryMessages,
   createStreamingArtifactFilter,
@@ -34,13 +35,6 @@ const DEFAULT_LOCAL_TEXT_TIMEOUT_MS = 6 * 60 * 1000;
 const MIN_TEXT_TIMEOUT_MS = 30 * 1000;
 const MAX_TEXT_TIMEOUT_MS = 30 * 60 * 1000;
 const WINDOWS_DEFAULT_LOCAL_CONTEXT_TOKENS = 65_536;
-// Rough chars-per-token for English prose, used to budget story history.
-const HISTORY_CHARS_PER_TOKEN = 3.6;
-// Tokens held back for the system prompt, character portraits, and the reply.
-const HISTORY_RESERVE_TOKENS = 8_192;
-// Stay comfortably under the context window so a turn can never max it out.
-const CONTEXT_SAFETY_MARGIN = 0.9;
-const MIN_HISTORY_CHAR_BUDGET = 48_000;
 // History budget for remote/custom backends, whose context window we can't
 // introspect. ~43K tokens; long stories still compact via the rolling summary.
 const REMOTE_HISTORY_CHAR_BUDGET = 172_800;
@@ -106,7 +100,7 @@ const requestSchema = z.object({
     customModel: z.string().trim().max(200).default(""),
     customApiKey: z.string().trim().max(400).default(""),
     imageMode: z.enum(["fast", "slow"]).default("slow"),
-    imageBackend: z.enum(["mflux-hs", "sdnq-hs", "comfyui"]).default("mflux-hs"),
+    imageBackend: z.enum(["mflux-hs", "sdnq-hs", "comfyui", "manual"]).default("mflux-hs"),
     comfyUrl: z.string().trim().max(500).default(""),
     comfyCheckpoint: z.string().trim().max(300).default(""),
     aspect: z.enum(["square", "portrait", "landscape"]).default("square"),
@@ -121,7 +115,7 @@ const generateImageTool = {
   function: {
     name: "generate_image",
     description:
-      "Request one local FLUX image for a meaningful visual beat in the current roleplay scene. Use sparingly.",
+      "Request one illustration for a meaningful visual beat in the current roleplay scene. Use sparingly.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -303,10 +297,8 @@ function localMaxOutputTokens() {
   return Math.max(256, Math.min(parsed, MAX_CONFIGURABLE_OUTPUT_TOKENS));
 }
 
-// Defaults to the model's full native window: Gemma 4's sliding-window
-// attention keeps the KV cache small even at 256K, so memory is not the
-// limiting factor. LOCAL_TEXT_CONTEXT can cap it to bound worst-case
-// prefill time on very long stories.
+// Windows defaults to 64K. Applies to both the local provider and custom
+// connections matching this application's configured Ollama library.
 function localContextTokens(model: string) {
   const native = localModelContextWindow(model);
   const raw = serverEnv("LOCAL_TEXT_CONTEXT");
@@ -547,6 +539,9 @@ async function requestCustomMessage(
     messages,
     temperature: 0.9,
     max_tokens: configuredMaxOutputTokens(),
+    ...(serverEnv("OPENAI_COMPAT_REASONING_EFFORT")
+      ? { reasoning_effort: serverEnv("OPENAI_COMPAT_REASONING_EFFORT") }
+      : {}),
     ...(onDelta ? { stream: true } : {}),
   };
 
@@ -732,6 +727,7 @@ async function requestLocalMessage(
   includeImageTool: boolean,
   disableThinking = true,
   onDelta?: StreamDeltaHandler,
+  customOptions?: { maxOutputTokens: number; apiKey: string },
 ): Promise<UpstreamResult> {
   const baseUrl = serverEnv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").replace(/\/$/, "");
   const requestPayload: Record<string, unknown> = {
@@ -742,7 +738,7 @@ async function requestLocalMessage(
     keep_alive: "30m",
     options: {
       temperature: 0.9,
-      num_predict: localMaxOutputTokens(),
+      num_predict: customOptions?.maxOutputTokens ?? localMaxOutputTokens(),
       num_ctx: localContextTokens(model),
     },
   };
@@ -763,7 +759,10 @@ async function requestLocalMessage(
   try {
     upstream = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(customOptions?.apiKey ? { Authorization: `Bearer ${customOptions.apiKey}` } : {}),
+      },
       body: JSON.stringify(requestPayload),
       signal: requestTimeout.signal,
     });
@@ -796,12 +795,12 @@ async function requestLocalMessage(
 
     // Some local models lack a tool-call template; retry the turn without auto images.
     if (includeImageTool && /does not support tools/i.test(text)) {
-      return requestLocalMessage(model, messages, false, disableThinking, onDelta);
+      return requestLocalMessage(model, messages, false, disableThinking, onDelta, customOptions);
     }
 
     // Models without a thinking channel reject the think parameter; retry without it.
     if (disableThinking && /does not support think/i.test(text)) {
-      return requestLocalMessage(model, messages, includeImageTool, false, onDelta);
+      return requestLocalMessage(model, messages, includeImageTool, false, onDelta, customOptions);
     }
 
     const hint = /not found/i.test(text)
@@ -894,6 +893,13 @@ Write compact prose in past tense, no headings or lists, at most 500 words. Outp
 
 type StoryRequestSettings = z.infer<typeof requestSchema>["settings"];
 
+function configuredOllamaModel(settings: StoryRequestSettings): string | null {
+  if (settings.textProvider === "local") return settings.localTextModel;
+  const baseUrl = settings.customBaseUrl || serverEnv("OPENAI_COMPAT_BASE_URL");
+  if (!isConfiguredOllama(baseUrl, serverEnv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))) return null;
+  return settings.customModel || serverEnv("OPENAI_COMPAT_MODEL");
+}
+
 // Single place that picks the upstream provider for a turn.
 function requestStoryMessage(
   settings: StoryRequestSettings,
@@ -903,6 +909,13 @@ function requestStoryMessage(
 ): Promise<UpstreamResult> {
   if (settings.textProvider === "local") {
     return requestLocalMessage(settings.localTextModel, messages, includeImageTool, true, onDelta);
+  }
+  const ollamaModel = configuredOllamaModel(settings);
+  if (ollamaModel) {
+    return requestLocalMessage(ollamaModel, messages, includeImageTool, true, onDelta, {
+      maxOutputTokens: configuredMaxOutputTokens(),
+      apiKey: settings.customApiKey || serverEnv("OPENAI_COMPAT_API_KEY"),
+    });
   }
   return requestCustomMessage(
     settings.customBaseUrl,
@@ -976,17 +989,13 @@ export async function POST(request: Request) {
   }
 
   const provider = body.settings.textProvider;
-  const historyCharBudget =
-    provider === "local"
-      ? Math.max(
-          MIN_HISTORY_CHAR_BUDGET,
-          Math.round(
-            (localContextTokens(body.settings.localTextModel) - HISTORY_RESERVE_TOKENS) *
-              CONTEXT_SAFETY_MARGIN *
-              HISTORY_CHARS_PER_TOKEN,
-          ),
-        )
-      : REMOTE_HISTORY_CHAR_BUDGET;
+  const ollamaModel = configuredOllamaModel(body.settings);
+  const historyCharBudget = ollamaModel
+    ? ollamaHistoryCharBudget(
+        localContextTokens(ollamaModel),
+        body.settings.textProvider === "local" ? localMaxOutputTokens() : configuredMaxOutputTokens(),
+      )
+    : REMOTE_HISTORY_CHAR_BUDGET;
 
   const { recent, evicted } = packStoryHistory(body.messages, historyCharBudget);
   let storySummary = "";

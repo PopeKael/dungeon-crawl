@@ -1,7 +1,6 @@
 "use client";
 
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
-import * as Dialog from "@radix-ui/react-dialog";
 import {
   Aperture,
   Backpack,
@@ -20,12 +19,14 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Save,
   Send,
   Settings2,
   Sparkles,
   Trash2,
   Type,
   UserRound,
+  Volume2,
   WandSparkles,
   X,
 } from "lucide-react";
@@ -58,6 +59,7 @@ import type {
 } from "@/lib/types";
 
 const SELECTED_CHAT_KEY = "local-roleplay:selected-chat";
+const STORY_BOOKMARK_KEY = "local-roleplay:bookmark:";
 const MAX_IMAGE_REFERENCES = 2;
 const STORY_REQUEST_TIMEOUT_MS = 7 * 60 * 1000;
 
@@ -340,6 +342,10 @@ function chatToSummary(chat: StoryChat): StoryChatSummary {
 export default function Home() {
   const [chats, setChats] = useState<StoryChatSummary[]>([]);
   const [selectedChatId, setSelectedChatId] = useState("");
+  const [screen, setScreen] = useState<"home" | "story">("home");
+  const [savingStory, setSavingStory] = useState(false);
+  const [deletingStory, setDeletingStory] = useState(false);
+  const [homeNotice, setHomeNotice] = useState("");
   const [messages, setMessages] = useState<StoryMessage[]>([]);
   const [characters, setCharacters] = useState<StoryCharacter[]>([]);
   const [characterDraft, setCharacterDraft] = useState<CharacterDraft>(emptyCharacterDraft);
@@ -373,6 +379,8 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const storyScrollRef = useRef<HTMLDivElement>(null);
+  const resumeScrollRef = useRef<number | null>(null);
 
   const activeChat = useMemo(
     () => chats.find((chat) => chat.id === selectedChatId),
@@ -384,7 +392,7 @@ export default function Home() {
   }, [messages]);
 
 
-  const applyChat = useCallback((chat: StoryChat) => {
+  const applyChat = useCallback((chat: StoryChat, openStory = true) => {
     setSelectedChatId(chat.id);
     window.localStorage.setItem(SELECTED_CHAT_KEY, chat.id);
     setMessages(chat.messages);
@@ -392,6 +400,29 @@ export default function Home() {
     setCharacterDraft(emptyCharacterDraft());
     setSettings(chat.settings);
     setAttachments([]);
+    setInput("");
+    setInputMode("do");
+    setEditingId("");
+    resumeScrollRef.current = null;
+    try {
+      const bookmark = JSON.parse(window.localStorage.getItem(STORY_BOOKMARK_KEY + chat.id) || "null");
+      if (isRecord(bookmark)) {
+        if (typeof bookmark.input === "string") setInput(bookmark.input);
+        if (bookmark.inputMode === "do" || bookmark.inputMode === "say" || bookmark.inputMode === "story") {
+          setInputMode(bookmark.inputMode);
+        }
+        if (typeof bookmark.scrollTop === "number" && Number.isFinite(bookmark.scrollTop)) {
+          resumeScrollRef.current = Math.max(0, bookmark.scrollTop);
+        }
+        if (Array.isArray(bookmark.attachments)) {
+          setAttachments(bookmark.attachments.filter((item): item is Attachment =>
+            isRecord(item) && ["id", "name", "type", "url"].every((key) => typeof item[key] === "string")));
+        }
+      }
+    } catch {
+      // A damaged browser bookmark must not prevent loading the saved story.
+    }
+    if (openStory) setScreen("story");
     setImageStatus({});
     lastSavedSettingsRef.current = JSON.stringify(chat.settings);
   }, []);
@@ -411,6 +442,7 @@ export default function Home() {
 
   const loadChat = useCallback(
     async (chatId: string) => {
+      if (savingStory) return;
       setLoadingChat(true);
       setError("");
 
@@ -424,44 +456,45 @@ export default function Home() {
         setLoadingChat(false);
       }
     },
-    [applyChat],
+    [applyChat, savingStory],
   );
 
   const clearSelectedChat = useCallback(() => {
     window.localStorage.removeItem(SELECTED_CHAT_KEY);
     setSelectedChatId("");
+    setScreen("home");
     setMessages([]);
     setCharacters([]);
     setCharacterDraft(emptyCharacterDraft());
     applyDefaultSettings();
     setAttachments([]);
     setImageStatus({});
+    setInput("");
+    setInputMode("do");
+    resumeScrollRef.current = null;
   }, [applyDefaultSettings]);
 
   const deleteChatById = useCallback(
     async (chatId: string) => {
+      if (busy || savingStory || deletingStory) return;
+      setDeletingStory(true);
       setError("");
 
       try {
         const response = await fetch(`/api/chats/${chatId}`, { method: "DELETE" });
         await readApi<{ ok: true }>(response);
-        const remainingChats = await refreshChats();
-
-        if (chatId !== selectedChatId) {
-          return;
-        }
-
-        if (remainingChats.length) {
-          await loadChat(remainingChats[0].id);
-          return;
-        }
-
-        clearSelectedChat();
+        window.localStorage.removeItem(STORY_BOOKMARK_KEY + chatId);
+        setChats((previous) => previous.filter((chat) => chat.id !== chatId));
+        if (chatId === selectedChatId) clearSelectedChat();
+        setHomeNotice("Story deleted.");
+        await refreshChats();
       } catch (deleteError) {
         setError(deleteError instanceof Error ? deleteError.message : "Delete failed.");
+      } finally {
+        setDeletingStory(false);
       }
     },
-    [clearSelectedChat, loadChat, refreshChats, selectedChatId],
+    [busy, savingStory, deletingStory, clearSelectedChat, refreshChats, selectedChatId],
   );
 
   const clearAllLocalData = useCallback(async () => {
@@ -510,7 +543,7 @@ export default function Home() {
           const response = await fetch(`/api/chats/${nextChatId}`, { cache: "no-store" });
           const payload = await readApi<ChatResponse>(response);
           if (!cancelled) {
-            applyChat(payload.chat);
+            applyChat(payload.chat, false);
           }
         } else if (!cancelled) {
           applyDefaultSettings();
@@ -560,7 +593,7 @@ export default function Home() {
   }, [applyRuntimeHealth]);
 
   useEffect(() => {
-    if (!selectedChatId || libraryLoading || loadingChat) {
+    if (!selectedChatId || libraryLoading || loadingChat || savingStory || screen !== "story") {
       return;
     }
 
@@ -599,7 +632,35 @@ export default function Home() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [libraryLoading, loadingChat, selectedChatId, settings]);
+  }, [libraryLoading, loadingChat, savingStory, screen, selectedChatId, settings]);
+
+  async function saveAndReturn() {
+    if (busy || savingStory || uploading || characterSaving || characterUploadingId || editingId || !selectedChatId) return;
+    setSavingStory(true);
+    setError("");
+    try {
+      window.localStorage.setItem(STORY_BOOKMARK_KEY + selectedChatId, JSON.stringify({
+        input, inputMode, attachments, scrollTop: storyScrollRef.current?.scrollTop ?? 0,
+      }));
+      const response = await fetch(`/api/chats/${selectedChatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings }),
+      });
+      const payload = await readApi<ChatResponse>(response);
+      lastSavedSettingsRef.current = JSON.stringify(payload.chat.settings);
+      defaultSettingsRef.current = payload.chat.settings;
+      await refreshChats();
+      setHomeNotice("Story saved. Resume whenever you’re ready.");
+      setActiveDesktopPanel(null);
+      setMobileToolsOpen(false);
+      setScreen("home");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Story could not be saved. Please try again.");
+    } finally {
+      setSavingStory(false);
+    }
+  }
 
   // Autoscroll: a freshly generated passage is pinned with its start at the
   // top of the viewport so long replies read from the beginning (#10); player
@@ -642,6 +703,19 @@ export default function Home() {
   }, [messages, selectedChatId]);
 
   useEffect(() => {
+    if (newStoryOpen || screen !== "story" || loadingChat || libraryLoading) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (resumeScrollRef.current !== null && storyScrollRef.current) {
+        storyScrollRef.current.scrollTop = resumeScrollRef.current;
+        resumeScrollRef.current = null;
+      } else {
+        endRef.current?.scrollIntoView({ block: "end" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [screen, selectedChatId, loadingChat, libraryLoading, newStoryOpen]);
+
+  useEffect(() => {
     if (busy) {
       endRef.current?.scrollIntoView({ block: "end" });
     }
@@ -658,7 +732,7 @@ export default function Home() {
     composer.style.height = "auto";
     const maxHeight = Math.round(window.innerHeight * 0.4);
     composer.style.height = `${Math.min(composer.scrollHeight, maxHeight)}px`;
-  }, [input]);
+  }, [input, screen, newStoryOpen]);
 
   const setImageGenerationEnabled = useCallback((imageGenerationEnabled: boolean) => {
     setSettings((current) => ({ ...current, imageGenerationEnabled }));
@@ -883,7 +957,7 @@ export default function Home() {
     refs: Attachment[],
     imageRequest?: StoryMessage["imageRequest"],
   ) {
-    if (!settings.imageGenerationEnabled) {
+    if (!settings.imageGenerationEnabled || settings.imageBackend === "manual") {
       return;
     }
 
@@ -971,6 +1045,7 @@ export default function Home() {
 
       if (
         opts.settings.imageGenerationEnabled &&
+        opts.settings.imageBackend !== "manual" &&
         payload.imageRequest?.needed &&
         payload.imageRequest.prompt
       ) {
@@ -1137,7 +1212,7 @@ export default function Home() {
   }
 
   async function continueStory() {
-    if (busy || !selectedChatId || !messages.length) {
+    if (busy || savingStory || !selectedChatId || !messages.length) {
       return;
     }
     await runTurn({
@@ -1151,7 +1226,7 @@ export default function Home() {
 
   // Regenerate the most recent narrator passage for the same player action.
   async function retryLastTurn() {
-    if (busy || !selectedChatId || !messages.length) {
+    if (busy || savingStory || !selectedChatId || !messages.length) {
       return;
     }
 
@@ -1200,7 +1275,7 @@ export default function Home() {
   // Erase the most recent exchange (the latest narrator passage and the player
   // action that prompted it), like AI Dungeon's Erase / Undo.
   async function eraseLastTurn() {
-    if (busy || !selectedChatId || !messages.length) {
+    if (busy || savingStory || !selectedChatId || !messages.length) {
       return;
     }
 
@@ -1305,9 +1380,11 @@ export default function Home() {
     event.preventDefault();
 
     const trimmed = input.trim();
-    if (!trimmed || busy || !selectedChatId) {
+    if (!trimmed || busy || savingStory || !selectedChatId) {
       return;
     }
+    // A submitted action must not reappear as an unsent paused draft.
+    window.localStorage.removeItem(STORY_BOOKMARK_KEY + selectedChatId);
 
     const formatted = formatPlayerInput(inputMode, trimmed);
     const conversationBeforeTurn = messages;
@@ -1353,7 +1430,7 @@ export default function Home() {
           chats={chats}
           selectedChatId={selectedChatId}
           loading={libraryLoading}
-          onCreate={() => setNewStoryOpen(true)}
+          onCreate={() => openNewStory()}
           onSelect={(chatId) => void loadChat(chatId)}
           onDelete={(chatId) => void deleteChatById(chatId)}
           fillAvailable={activeDesktopPanel === "chats"}
@@ -1451,6 +1528,27 @@ export default function Home() {
     return <SupportPanel key={panel} {...desktopPanelControls(panel)} />;
   }
 
+  function openNewStory() {
+    if (storyScrollRef.current) resumeScrollRef.current = storyScrollRef.current.scrollTop;
+    setMobileToolsOpen(false);
+    setNewStoryOpen(true);
+  }
+
+  function renderSaveAndReturn() {
+    return (
+      <button
+        type="button"
+        onClick={() => void saveAndReturn()}
+        disabled={busy || savingStory || loadingChat || libraryLoading || uploading || characterSaving || !!characterUploadingId || !!editingId || !selectedChatId}
+        title={editingId ? "Finish editing the passage before saving and returning." : "Save your place and return to the front page"}
+        className="flex w-full items-center justify-center gap-2 rounded-lg border border-amber-200/30 bg-amber-200/10 px-4 py-3 text-sm font-medium text-amber-100 hover:bg-amber-200/20 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {savingStory ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <Save className="size-4" aria-hidden="true" />}
+        {savingStory ? "Saving…" : "Save & return"}
+      </button>
+    );
+  }
+
   return (
     <main className="flex h-dvh min-h-dvh flex-1 overflow-hidden bg-[#130d09] text-stone-100">
       <section className="mx-auto flex h-dvh min-h-0 w-full max-w-7xl flex-1 flex-col px-3 pt-3 sm:px-4 md:px-8 md:pt-4">
@@ -1458,10 +1556,10 @@ export default function Home() {
           <div className="flex min-w-0 items-center gap-3">
             <div className="min-w-0">
               <h1 className="truncate text-balance text-base font-semibold text-stone-100">
-                {activeChat?.title || "Open Dungeon"}
+                {newStoryOpen ? "Open Dungeon · New story" : screen === "story" ? activeChat?.title || "Open Dungeon" : "Open Dungeon"}
               </h1>
               <p className="truncate text-xs text-stone-500">
-                {settings.textProvider === "local"
+                {newStoryOpen ? "Choose the world for your next adventure." : screen === "home" ? "An adventure shaped by your choices." : settings.textProvider === "local"
                   ? `${
                       LOCAL_TEXT_MODELS.find((model) => model.id === settings.localTextModel)
                         ?.label ?? "Local model"
@@ -1475,29 +1573,30 @@ export default function Home() {
               type="button"
               aria-label="Open story tools"
               onClick={() => setMobileToolsOpen(true)}
-              className="inline-flex size-10 items-center justify-center rounded border border-stone-700 text-stone-300 hover:bg-stone-900 lg:hidden"
+              className={cn("size-10 items-center justify-center rounded border border-stone-700 text-stone-300 hover:bg-stone-900 lg:hidden", !newStoryOpen && screen === "story" ? "inline-flex" : "hidden")}
             >
               <Settings2 className="size-4" aria-hidden="true" />
             </button>
-            <button
+            {!newStoryOpen && <button
               type="button"
-              onClick={() => setNewStoryOpen(true)}
+              onClick={() => openNewStory()}
+              disabled={busy || savingStory || libraryLoading || loadingChat}
               className="inline-flex h-10 items-center gap-2 rounded border border-stone-700 px-3 text-sm text-stone-300 hover:bg-stone-900"
             >
               <Plus className="size-4" aria-hidden="true" />
               <span className="hidden sm:inline">New story</span>
               <span className="sm:hidden">New</span>
-            </button>
+            </button>}
           </div>
         </header>
 
-        <MobileChatBar
+        {!newStoryOpen && screen === "story" && <MobileChatBar
           chats={chats}
           selectedChatId={selectedChatId}
           disabled={libraryLoading || loadingChat}
           onSelect={(chatId) => void loadChat(chatId)}
           onDelete={(chatId) => void deleteChatById(chatId)}
-        />
+        />}
 
         <MobileToolsSheet
           open={mobileToolsOpen}
@@ -1544,16 +1643,28 @@ export default function Home() {
         />
 
         {newStoryOpen && (
-          <NewStoryDialog
+          <NewStorySetup
             onClose={() => setNewStoryOpen(false)}
             onBegin={(options) => void beginStory(options)}
           />
         )}
 
-        <div className="grid min-h-0 flex-1 overflow-hidden gap-4 py-3 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-6 lg:py-6">
+        {!newStoryOpen && (screen === "home" ? (
+          <StoryHome
+            chats={chats}
+            currentChat={activeChat}
+            loading={libraryLoading || loadingChat}
+            notice={homeNotice}
+            error={error}
+            onResume={(chatId) => void loadChat(chatId)}
+            onNew={() => openNewStory()}
+            onDelete={(chatId) => void deleteChatById(chatId)}
+            deleting={deletingStory}
+          />
+        ) : <div className="grid min-h-0 flex-1 overflow-hidden gap-4 py-3 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-6 lg:py-6">
           <section className="flex h-full min-h-0 flex-col">
             <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col">
-              <div className="min-h-0 flex-1 space-y-8 overflow-y-auto overscroll-contain pr-1 pb-3 sm:space-y-10">
+              <div ref={storyScrollRef} className="min-h-0 flex-1 space-y-8 overflow-y-auto overscroll-contain pr-1 pb-3 sm:space-y-10">
                 {libraryLoading || loadingChat ? (
                   <StorySkeleton />
                 ) : messages.length === 0 && !busy ? (
@@ -1572,7 +1683,7 @@ export default function Home() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setNewStoryOpen(true)}
+                      onClick={() => openNewStory()}
                       className="inline-flex h-10 items-center gap-2 rounded-lg bg-amber-200 px-4 text-sm font-medium text-stone-950 hover:bg-amber-100"
                     >
                       <Plus className="size-4" aria-hidden="true" />
@@ -1615,13 +1726,20 @@ export default function Home() {
                             storyProseClassName(settings.proseSize),
                           )}
                         >
-                          <p className="text-pretty whitespace-pre-wrap">
+                          <p id={`story-prose-${message.id}`} className="text-pretty whitespace-pre-wrap">
                             {renderStoryEmphasis(message.content)}
                           </p>
+                          <SpeakButton
+                            chatId={selectedChatId}
+                            messageId={message.id}
+                            disabled={busy}
+                          />
                           {(message.generatedImage ||
                             (settings.imageGenerationEnabled && message.imageRequest?.needed)) && (
                             <ImageBeat
                               message={message}
+                              manual={settings.imageBackend === "manual"}
+                              characters={characters}
                               status={imageStatus[message.id]}
                               onRetry={() =>
                                 message.imageRequest?.prompt &&
@@ -1683,21 +1801,21 @@ export default function Home() {
                       icon={ChevronRight}
                       label="Continue"
                       title="Let the narrator continue without you"
-                      disabled={busy || !selectedChatId}
+                      disabled={busy || savingStory || !selectedChatId}
                       onClick={() => void continueStory()}
                     />
                     <StoryActionButton
                       icon={RotateCcw}
                       label="Retry"
                       title="Regenerate the last passage"
-                      disabled={busy || !selectedChatId}
+                      disabled={busy || savingStory || !selectedChatId}
                       onClick={() => void retryLastTurn()}
                     />
                     <StoryActionButton
                       icon={Eraser}
                       label="Erase"
                       title="Remove the last exchange"
-                      disabled={busy || !selectedChatId}
+                      disabled={busy || savingStory || !selectedChatId}
                       onClick={() => void eraseLastTurn()}
                     />
                   </div>
@@ -1730,7 +1848,7 @@ export default function Home() {
                       INPUT_MODES.find((m) => m.value === inputMode)?.placeholder ?? "What do you do?"
                     }
                     className="min-h-16 w-full resize-none overflow-y-auto bg-transparent px-4 pb-1 pt-3.5 text-base text-stone-100 outline-none placeholder:text-stone-600 disabled:cursor-not-allowed disabled:text-stone-600 sm:min-h-20"
-                    disabled={libraryLoading || loadingChat}
+                    disabled={libraryLoading || loadingChat || savingStory}
                   />
                   <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
                     <div className="flex items-center gap-1">
@@ -1740,6 +1858,7 @@ export default function Home() {
                             key={m.value}
                             type="button"
                             aria-pressed={inputMode === m.value}
+                            disabled={savingStory}
                             onClick={() => setInputMode(m.value)}
                             className={cn(
                               "rounded-md px-2.5 py-1 text-xs font-medium text-stone-400 hover:text-stone-200",
@@ -1755,7 +1874,7 @@ export default function Home() {
                         aria-label="Attach image references"
                         onClick={() => fileInputRef.current?.click()}
                         className="flex size-9 shrink-0 items-center justify-center rounded-lg text-stone-400 hover:bg-stone-900 hover:text-stone-200 disabled:cursor-not-allowed disabled:text-stone-600"
-                        disabled={uploading || libraryLoading}
+                        disabled={uploading || libraryLoading || savingStory}
                       >
                         {uploading ? (
                           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -1769,7 +1888,7 @@ export default function Home() {
                       <button
                         type="submit"
                         aria-label="Send"
-                        disabled={busy || !input.trim() || !selectedChatId || libraryLoading}
+                        disabled={busy || savingStory || !input.trim() || !selectedChatId || libraryLoading}
                         className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-amber-200 px-4 text-sm font-medium text-stone-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:bg-stone-800 disabled:text-stone-500"
                       >
                         <Send className="size-4" aria-hidden="true" />
@@ -1779,6 +1898,7 @@ export default function Home() {
                   </div>
                 </div>
               </form>
+              <div className="mt-2 lg:hidden">{renderSaveAndReturn()}</div>
             </div>
           </section>
 
@@ -1797,15 +1917,94 @@ export default function Home() {
                 setSettings={setSettings}
                 idPrefix="desktop-rail"
               />
+              {renderSaveAndReturn()}
             </div>
           </aside>
-        </div>
+        </div>)}
       </section>
     </main>
   );
 }
 
-function NewStoryDialog({
+function StoryHome({ chats, currentChat, loading, notice, error, onResume, onNew, onDelete, deleting }: {
+  chats: StoryChatSummary[];
+  currentChat?: StoryChatSummary;
+  loading: boolean;
+  notice: string;
+  error: string;
+  onResume: (chatId: string) => void;
+  onNew: () => void;
+  onDelete: (chatId: string) => void;
+  deleting: boolean;
+}) {
+  return (
+    <section className="min-h-0 flex-1 overflow-y-auto py-8 sm:py-12" aria-label="Story home">
+      <div className="mx-auto max-w-3xl space-y-6">
+        <div>
+          <BookOpen className="mb-4 size-8 text-amber-200" aria-hidden="true" />
+          <p className="mb-2 text-xs uppercase tracking-[0.2em] text-amber-200">Your world. Your choices.</p>
+          <h2 className="font-serif text-4xl text-amber-50 sm:text-5xl">Open Dungeon</h2>
+          <p className="mt-4 max-w-2xl text-base leading-7 text-stone-300">Step into a world of your choosing. You play the main character; the AI narrates the world, the people you meet, and what happens next. There is no script to follow — just decide what you do.</p>
+        </div>
+        <section aria-labelledby="how-to-play" className="rounded-xl border border-stone-800 bg-stone-950/30 p-5 sm:p-6">
+          <h3 id="how-to-play" className="font-serif text-xl text-amber-50">How to play</h3>
+          <ol className="mt-4 grid gap-4 text-sm leading-6 text-stone-400 sm:grid-cols-2">
+            <li><span className="block font-medium text-stone-200">1. Choose your beginning</span>Start a new story, choose a setting and character, then let the narrator open the scene or write it yourself.</li>
+            <li><span className="block font-medium text-stone-200">2. Make your next move</span>Use Do for actions, Say for dialogue, or Story to guide the narration. Send your choice, or use Continue to let events unfold.</li>
+            <li><span className="block font-medium text-stone-200">3. Read or listen</span>Read each passage at your own pace. Use Speak beneath it to hear it through Speechify.</li>
+            <li><span className="block font-medium text-stone-200">4. Come back whenever you like</span>Save &amp; return keeps your place and brings you here. Resume story picks up without advancing the story.</li>
+          </ol>
+        </section>
+        {notice && <p role="status" className="text-sm text-amber-200">{notice}</p>}
+        {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
+        {loading ? <p role="status" className="text-sm text-stone-400">Loading your stories…</p> : (
+          <>
+            {currentChat && (
+              <article className="rounded-xl border border-amber-200/25 bg-stone-950/60 p-5 sm:p-6">
+                <p className="text-xs font-medium uppercase tracking-wider text-amber-200">Current story</p>
+                <h3 className="mt-2 font-serif text-2xl">{currentChat.title}</h3>
+                <p className="mt-1 text-xs text-stone-500">{currentChat.messageCount} messages · Saved {formatChatDate(currentChat.updatedAt)}</p>
+                <p className="mt-4 line-clamp-3 whitespace-pre-wrap font-serif leading-7 text-stone-300">{currentChat.lastMessagePreview}</p>
+                <button type="button" onClick={() => onResume(currentChat.id)} className="mt-5 inline-flex items-center gap-2 rounded-lg bg-amber-200 px-4 py-2.5 text-sm font-medium text-stone-950 hover:bg-amber-100">
+                  <Play className="size-4" aria-hidden="true" /> Resume story
+                </button>
+                <DeleteChatDialog chat={currentChat} onConfirm={() => onDelete(currentChat.id)}>
+                  <button type="button" disabled={deleting} aria-label={`Delete ${currentChat.title}`} className="mt-5 ml-3 inline-flex items-center gap-2 rounded-lg border border-stone-700 px-4 py-2.5 text-sm text-stone-400 hover:border-red-400/50 hover:text-red-200 disabled:opacity-50">
+                    <Trash2 className="size-4" aria-hidden="true" /> Delete story
+                  </button>
+                </DeleteChatDialog>
+              </article>
+            )}
+            <button type="button" onClick={onNew} className="flex w-full items-center gap-3 rounded-xl border border-stone-700 bg-stone-950/40 p-5 text-left hover:bg-stone-900">
+              <Plus className="size-5 text-amber-200" aria-hidden="true" />
+              <span><span className="block font-medium">New story</span><span className="mt-1 block text-sm text-stone-500">Choose a setting and begin a fresh adventure.</span></span>
+            </button>
+            {chats.some((chat) => chat.id !== currentChat?.id) && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-stone-400">Other stories</h3>
+                {chats.filter((chat) => chat.id !== currentChat?.id).map((chat) => (
+                  <div key={chat.id} className="flex items-stretch rounded-lg border border-stone-800">
+                  <button type="button" onClick={() => onResume(chat.id)} className="flex min-w-0 flex-1 items-center justify-between gap-4 rounded-l-lg p-4 text-left hover:bg-stone-900">
+                    <span><span className="block text-stone-200">{chat.title}</span><span className="mt-1 block text-xs text-stone-500">{chat.messageCount} messages · {formatChatDate(chat.updatedAt)}</span></span>
+                    <ChevronRight className="size-4 shrink-0 text-stone-500" aria-hidden="true" />
+                  </button>
+                  <DeleteChatDialog chat={chat} onConfirm={() => onDelete(chat.id)}>
+                    <button type="button" disabled={deleting} aria-label={`Delete ${chat.title}`} className="inline-flex shrink-0 items-center gap-2 rounded-r-lg px-4 text-sm text-stone-400 hover:bg-stone-900 hover:text-red-200 disabled:opacity-50">
+                      <Trash2 className="size-4" aria-hidden="true" /><span className="hidden sm:inline">Delete story</span>
+                    </button>
+                  </DeleteChatDialog>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function NewStorySetup({
   onClose,
   onBegin,
 }: {
@@ -1854,31 +2053,24 @@ function NewStoryDialog({
   }
 
   return (
-    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/80" />
-        <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(calc(100vw-2rem),580px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-stone-700 bg-[#130d09] p-5 shadow-xl"
-          onOpenAutoFocus={(event) => event.preventDefault()}
-        >
+    <section aria-label="New story setup" className="min-h-0 flex-1 overflow-y-auto py-8 sm:py-12">
+      <div className="mx-auto max-w-3xl rounded-xl border border-stone-800 bg-stone-950/40 p-5 sm:p-8">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <Dialog.Title className="text-balance text-base font-semibold text-stone-100">
+              <h2 className="text-balance font-serif text-3xl text-amber-50">
                 New story
-              </Dialog.Title>
-              <Dialog.Description className="mt-1 text-pretty text-sm text-stone-500">
+              </h2>
+              <p className="mt-2 text-pretty text-sm text-stone-400">
                 Pick a setting, say who you are, and choose how the story opens.
-              </Dialog.Description>
+              </p>
             </div>
-            <Dialog.Close asChild>
               <button
                 type="button"
-                aria-label="Close"
-                className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-stone-800 text-stone-400 hover:bg-stone-900 hover:text-stone-100"
+                onClick={onClose}
+                className="shrink-0 rounded-lg border border-stone-700 px-3 py-2 text-sm text-stone-300 hover:bg-stone-900"
               >
-                <X className="size-4" aria-hidden="true" />
+                Back
               </button>
-            </Dialog.Close>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -2022,14 +2214,13 @@ function NewStoryDialog({
           </div>
 
           <div className="mt-5 flex items-center justify-end gap-2">
-            <Dialog.Close asChild>
               <button
                 type="button"
+                onClick={onClose}
                 className="rounded-lg border border-stone-700 px-3 py-2 text-sm text-stone-300 hover:bg-stone-900"
               >
                 Cancel
               </button>
-            </Dialog.Close>
             <button
               type="button"
               disabled={!canBegin}
@@ -2040,9 +2231,8 @@ function NewStoryDialog({
               Begin story
             </button>
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      </div>
+    </section>
   );
 }
 
@@ -2844,6 +3034,62 @@ const SERVER_PRESETS: Array<{ label: string; url: string }> = [
   { label: "Ollama", url: "http://127.0.0.1:11434/v1" },
 ];
 
+function normalizedOllamaUrl(value: string) {
+  return value.trim().replace(/\/+$/, "").replace(/\/v1$/, "").replace("://localhost:", "://127.0.0.1:");
+}
+
+function OllamaModelSelect({ value, baseUrl, onChange }: {
+  value: string;
+  baseUrl: string;
+  onChange: (model: string) => void;
+}) {
+  const [models, setModels] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    async function load() {
+      try {
+        const response = await fetch("/api/models", { cache: "no-store", signal: controller.signal });
+        const payload = await readApi<{ models: string[]; baseUrl: string }>(response);
+        if (normalizedOllamaUrl(payload.baseUrl) !== normalizedOllamaUrl(baseUrl)) {
+          throw new Error("The library belongs to a different Ollama server. Use its backend URL or enter a model manually.");
+        }
+        if (!controller.signal.aborted) setModels(payload.models);
+      } catch (cause) {
+        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Could not read the model library.");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+    void load();
+    return () => controller.abort();
+  }, [baseUrl, revision]);
+  return (
+    <div className="space-y-2">
+      <label className="block text-xs font-medium uppercase text-stone-500">
+        Ollama model library
+        <select aria-label="Ollama model library" value={value} disabled={loading || !!error || models.length === 0}
+          onChange={event => onChange(event.target.value)}
+          className="mt-2 w-full rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm normal-case text-stone-200 outline-none focus:border-amber-300 disabled:opacity-50">
+          {!models.includes(value) && <option value={value}>{value || "Choose a model"}{!loading && !error && value ? " · not in library" : ""}</option>}
+          {models.map(model => <option key={model} value={model}>{model}{model === "qwen3.5:4b" ? " · default" : ""}</option>)}
+        </select>
+      </label>
+      <div className="flex items-center justify-between gap-2">
+        <p role="status" className="text-xs text-stone-500">{loading ? "Reading your library…" : `${models.length} installed text models`}</p>
+        <button type="button" disabled={loading} onClick={() => { setLoading(true); setError(""); setRevision(current => current + 1); }} className="inline-flex items-center gap-1 rounded border border-stone-700 px-2 py-1 text-xs text-stone-300 hover:bg-stone-900 disabled:opacity-50">
+          <RotateCcw className="size-3" aria-hidden="true" /> Refresh models
+        </button>
+      </div>
+      {error && <p role="alert" className="text-xs text-amber-200/80">{error}</p>}
+      {!loading && !error && models.length === 0 && <p className="text-xs text-stone-400">No installed models support text generation.</p>}
+      <p className="text-xs leading-5 text-stone-500">Choose the narrator for your next turn. Your story stays intact. Refresh after adding a model to Ollama.</p>
+    </div>
+  );
+}
+
 function TextModelPanel({
   settings,
   setSettings,
@@ -2972,7 +3218,14 @@ function TextModelPanel({
               className="w-full rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300"
             />
           </div>
-          <div className="space-y-1.5">
+          {/:(11434)(?:\/|$)/.test(settings.customBaseUrl) && <OllamaModelSelect
+            key={settings.customBaseUrl}
+            value={settings.customModel}
+            baseUrl={settings.customBaseUrl}
+            onChange={customModel => setSettings(current => ({ ...current, customModel }))}
+          />}
+          <details className="space-y-1.5" open={!/:(11434)(?:\/|$)/.test(settings.customBaseUrl)}>
+            <summary className="cursor-pointer text-xs text-stone-400">Enter a model manually</summary>
             <label
               htmlFor={`${idPrefix}-custom-model`}
               className="block text-xs font-medium uppercase text-stone-500"
@@ -2994,7 +3247,7 @@ function TextModelPanel({
               }
               className="w-full rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300"
             />
-          </div>
+          </details>
           <div className="space-y-1.5">
             <label
               htmlFor={`${idPrefix}-custom-api-key`}
@@ -3287,6 +3540,7 @@ function ImageSettingsPanel({
 } & PanelControlProps) {
   const idPrefix = compact ? "mobile" : "desktop";
   const imageControlsDisabled = !settings.imageGenerationEnabled;
+  const usingManual = settings.imageBackend === "manual";
   const usingComfy = settings.imageBackend === "comfyui";
   const workerRunning = Boolean(imageWorkerStatus?.ok);
   const workerStatusLabel = workerRunning ? "Worker running" : "Worker stopped";
@@ -3308,7 +3562,7 @@ function ImageSettingsPanel({
       divided={divided}
     >
       <label className="flex items-center justify-between rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-300">
-        Image generation
+        Image requests
         <input
           id={`${idPrefix}-image-generation-enabled`}
           name={`${idPrefix}-image-generation-enabled`}
@@ -3323,6 +3577,7 @@ function ImageSettingsPanel({
         <Segmented<ImageBackend>
           value={settings.imageBackend}
           options={[
+            { value: "manual", label: "Manual prompt only" },
             { value: "mflux-hs", label: "MFLUX Mac" },
             { value: "sdnq-hs", label: "SDNQ GPU/CPU" },
             { value: "comfyui", label: "ComfyUI" },
@@ -3336,7 +3591,11 @@ function ImageSettingsPanel({
           }
         />
       </div>
-      {usingComfy ? (
+      {usingManual ? (
+        <p className="text-xs leading-relaxed text-stone-400">
+          The narrator can request illustrations. Prompts appear in the story to copy into your image generator.
+        </p>
+      ) : usingComfy ? (
         <ComfySettings
           settings={settings}
           setSettings={setSettings}
@@ -3378,7 +3637,7 @@ function ImageSettingsPanel({
           )}
         </div>
       )}
-      <div className="space-y-2">
+      {!usingManual && <div className="space-y-2">
         <span className="block text-xs font-medium uppercase text-stone-500">Size</span>
         <Segmented<ImageMode>
           value={settings.imageMode}
@@ -3390,7 +3649,7 @@ function ImageSettingsPanel({
           disabled={imageControlsDisabled}
           onChange={(imageMode) => setSettings((current) => ({ ...current, imageMode }))}
         />
-      </div>
+      </div>}
       <div className="space-y-2">
         <span className="block text-xs font-medium uppercase text-stone-500">Aspect</span>
         <Segmented<AspectPreset>
@@ -3410,7 +3669,7 @@ function ImageSettingsPanel({
           imageControlsDisabled && "text-stone-600",
         )}
       >
-        Auto images
+        Auto image requests
         <input
           id={`${idPrefix}-auto-images`}
           name={`${idPrefix}-auto-images`}
@@ -3569,7 +3828,7 @@ function DeleteChatDialog({
             Delete this story?
           </AlertDialog.Title>
           <AlertDialog.Description className="mt-2 text-pretty text-sm text-stone-400">
-            {chat.title} and its saved messages will be removed from the local database.
+            “{chat.title}” and its saved messages, characters and story memory will be permanently removed. This cannot be undone.
           </AlertDialog.Description>
           <div className="mt-5 flex justify-end gap-2">
             <AlertDialog.Cancel asChild>
@@ -3753,18 +4012,104 @@ function AttachmentStrip({
   );
 }
 
+function SpeakButton({ chatId, messageId, disabled }: {
+  chatId: string;
+  messageId: string;
+  disabled: boolean;
+}) {
+  const [speaking, setSpeaking] = useState(false);
+  const [status, setStatus] = useState("");
+
+  async function speak() {
+    const prose = document.getElementById(`story-prose-${messageId}`);
+    if (!prose) return;
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(prose);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    setSpeaking(true);
+    setStatus("");
+    try {
+      const response = await fetch("/api/reader", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId, messageId }),
+      });
+      const result = await response.json();
+      setStatus(result.message || result.error || "Reader request failed.");
+    } catch {
+      setStatus("Could not reach the Windows reader. The prose is selected; press Alt+F1 manually.");
+    } finally {
+      setSpeaking(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 font-sans text-xs text-stone-400">
+      <button type="button" onClick={speak} disabled={disabled || speaking}
+        title="Select this passage, copy it to the Windows reader and send Alt+F1"
+        className="inline-flex items-center gap-1.5 rounded border border-stone-800 px-2 py-1.5 text-stone-300 hover:bg-stone-900 disabled:opacity-50">
+        <Volume2 className="size-4" aria-hidden="true" />
+        {speaking ? "Sending…" : "Speak"}
+      </button>
+      <span role="status">{status}</span>
+    </div>
+  );
+}
+
 function ImageBeat({
   message,
+  manual = false,
+  characters = [],
   status,
   onRetry,
 }: {
   message: StoryMessage;
+  manual?: boolean;
+  characters?: StoryCharacter[];
   status?: "loading" | "error";
   onRetry: () => void;
 }) {
   const isLoading = status === "loading";
   const isError = status === "error";
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
+
+  if (manual && message.imageRequest?.prompt && !message.generatedImage) {
+    const request = message.imageRequest;
+    const prompt = request.prompt!;
+    return (
+      <section aria-label="Image request" className="mt-6 space-y-3 rounded border border-amber-900/60 bg-stone-950 px-4 py-4 font-sans text-sm text-stone-300">
+        <h3 className="font-semibold tracking-wide text-amber-200">IMAGE REQUEST</h3>
+        <div>
+          <p className="font-semibold">Prompt:</p>
+          <p className="mt-1 select-text whitespace-pre-wrap leading-relaxed">{prompt}</p>
+        </div>
+        <p><strong>Reason:</strong> {request.reason || "Not supplied"}</p>
+        <p><strong>Aspect:</strong> {request.aspect || "square"}</p>
+        <p><strong>Character references:</strong> {request.characterIds?.length
+          ? request.characterIds.map((id) => {
+              const character = characters.find((item) => item.id === id);
+              return character ? `${character.name} (${id})` : id;
+            }).join(", ")
+          : "None supplied"}</p>
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(prompt);
+              setCopyStatus("Copied");
+            } catch {
+              setCopyStatus("Copy unavailable. Select the prompt text and copy it manually.");
+            }
+          }}
+          className="rounded border border-stone-700 px-3 py-2 text-amber-200 hover:bg-stone-900"
+        >Copy prompt</button>
+        <p role="status" className="text-xs text-stone-400">{copyStatus}</p>
+      </section>
+    );
+  }
 
   if (message.generatedImage) {
     return (

@@ -5,6 +5,7 @@ import {
   isTextProvider,
 } from "@/lib/text-models";
 import type { StorySettings } from "@/lib/types";
+import { isImageBackend } from "@/lib/types";
 
 function clean(value: string) {
   return value.trim();
@@ -23,6 +24,7 @@ export function configuredDefaultStorySettings(): StorySettings {
       ? "custom"
       : DEFAULT_STORY_SETTINGS.textProvider;
   const requestedLocalModel = clean(serverEnv("LOCAL_TEXT_MODEL"));
+  const requestedImageBackend = clean(serverEnv("DEFAULT_IMAGE_BACKEND"));
   const localTextModel = isLocalTextModelId(requestedLocalModel)
     ? requestedLocalModel
     : DEFAULT_STORY_SETTINGS.localTextModel;
@@ -34,5 +36,8 @@ export function configuredDefaultStorySettings(): StorySettings {
     customBaseUrl,
     customModel,
     customApiKey: "",
+    imageBackend: isImageBackend(requestedImageBackend)
+      ? requestedImageBackend
+      : DEFAULT_STORY_SETTINGS.imageBackend,
   };
 }

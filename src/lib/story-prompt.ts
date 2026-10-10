@@ -113,7 +113,9 @@ export function buildStoryMessages(
           : "",
         `Saved characters:\n${characterRoster}`,
         settings.imageGenerationEnabled
-          ? `Image defaults: ${settings.imageBackend} backend, ${
+          ? settings.imageBackend === "manual"
+            ? `Image requests are saved for manual illustration. Use generate_image normally for useful visual beats. Image aspect: ${settings.aspect}. Do not include text overlays.`
+            : `Image defaults: ${settings.imageBackend} backend, ${
               settings.imageMode === "slow" ? "2048" : "1024"
             } long side, ${settings.aspect} aspect. Do not include text overlays in generated images.`
           : "",
