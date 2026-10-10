@@ -18,6 +18,8 @@ const attachmentSchema = z.object({
 
 const createCharacterSchema = z.object({
   name: z.string().trim().min(1),
+  controlType: z.enum(["npc", "player"]).optional(),
+  playerName: z.string().trim().max(100).optional(),
   details: z.string().optional(),
   inventory: z.string().optional(),
   skills: z.string().optional(),

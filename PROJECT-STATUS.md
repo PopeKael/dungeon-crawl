@@ -2,7 +2,7 @@
 
 ## Repository and deployment
 
-Repository: [PopeKael/dungeon-crawl](https://github.com/PopeKael/dungeon-crawl). Development branch: `phase1-text-manual-images`. Based on [Open Dungeon by newideas99](https://github.com/newideas99/open-dungeon); the original MIT licence and copyright notice are preserved. The repository name and `main` remain unchanged. This checkpoint includes the previously uncommitted Windows launcher and the documentation refresh; it does not implement the next feature.
+Repository: [PopeKael/dungeon-crawl](https://github.com/PopeKael/dungeon-crawl). Development branch: `phase1-text-manual-images`. Based on [Open Dungeon by newideas99](https://github.com/newideas99/open-dungeon); the original MIT licence and copyright notice are preserved. The repository name and `main` remain unchanged. The last pushed checkpoint is `cbc96a41de35d5abc7c054250c185342596d41fb`. The first Character-based multi-participant pass is now implemented locally.
 
 Independent Windows project at `F:\AI\DungeonCrawler`. Ariadne is not a runtime dependency and was not changed. Canonical start point: `DungeonCrawler.exe`, also installed as **Dungeon Crawl** on Desktop and in the Start menu. The native tray requires adjacent Node application, scripts, assets, configuration and data. It is built locally, not distributed as an installer or release binary.
 
@@ -14,12 +14,12 @@ The active narrator is `qwen3.5:4b`, selected from the installed Ollama library.
 
 | Area | Working behaviour and boundary |
 |---|---|
-| Story experience | Entrance/title/instructions, New story, Current story, Resume and separate setup view. Typed Do / Say / Story, Continue, Retry, Erase and passage editing. Fantasy, Mystery, Cyberpunk, Apocalyptic, Horror, Romance and custom openings. |
+| Story experience | Entrance/title/instructions, New story, Current story, Resume and separate setup view. Typed Do / Say, Random Event, Continue, Retry, Erase and passage editing. Fantasy, Mystery, Cyberpunk, Apocalyptic, Horror, Romance and custom openings. |
 | Text providers | Local Ollama and custom OpenAI-compatible routes. Installed completion-model picker with Refresh and manual entry. Local testing covers Qwen 3.5 4B and 9B; other endpoints retain their existing provider route. |
 | Streaming | Progressive narration deltas over NDJSON; reasoning/tool artefacts filtered from prose. Model loading, prompt prefill and compaction can delay the first token. |
 | Persistence | SQLite stories, messages, settings, characters, image requests and summaries. Save & return also stores unsent input/reading position as a browser bookmark; Resume does not advance narration. |
 | Deletion | Visible named destructive confirmation; deletion removes related records and browser bookmark. Deleting the selected story returns home. |
-| Characters | Saved descriptions, portraits, inventory, skills and spells enter the narrator prompt. Editable fields, not automatic inventory transactions or a complete rules engine. |
+| Characters | NPC / human-controlled Player Character distinction, optional real-player display name, selectable actor chips and one-player auto-selection. New player messages save actor ID/name; history, narrator context, retry and summary input preserve character identity. Legacy characters default to NPCs; legacy messages remain unattributed. Saved descriptions, portraits, inventory, skills and spells still enter the prompt. |
 | Long-story memory | Older passages outside the history budget fold into a persisted rolling summary. Best-effort summarisation retains the prior summary on failure; not guaranteed recall. The acceptance story has not triggered compaction at 64K. |
 | Images | Actual image-tool calls persist with prompt, reason, aspect and character references, shown as selectable text with Copy prompt. Manual mode refuses local rendering. Retained upstream local-image/ComfyUI paths are present but not accepted on this Windows hardware in this checkpoint. |
 | Voice | Speak selects a completed passage; an independent Windows helper retrieves saved passage IDs, writes the clipboard and sends fixed Alt+F1. Warren confirmed audible Speechify playback over HTTPS. No built-in local TTS, speech input or automatic narrator playback. |
@@ -44,7 +44,7 @@ The short-prompt comparison used the same prompt, seed, temperature, 4K context 
 
 History allowance is approximately 185,794 characters at the 2,048-token reply cap, reserving at least 8,192 tokens plus a 10% margin. This is an English-prose estimate, not exact admission; oversized instructions, attachments or passages can exceed it. The application still does not expose context-limit finish reasons as a dedicated warning.
 
-## Verification and retained evidence
+## Previous checkpoint verification and retained evidence
 
 This checkpoint passed `npm run lint`, `npm run build`, `npm run check:windows-launchers`, `npm run check:image-routing` and `npm run check:image-server-http` (fake rendering fixture; no GPU image generation). The native EXE rebuilt successfully. `scripts/verify-dungeon-launcher.ps1` passed nine readiness scenarios and script syntax; `node scripts/verify-ollama-context.mjs` passed routing, allocation, retry, streaming/non-streaming, output/auth preservation and history-budget checks with mocked upstream responses. `node scripts/verify-reader.mjs` passed six rejected-request boundaries without clipboard/key events. `node scripts/verify-phase1.mjs` verified saved character/image references, manual-render refusal and SQLite integrity without narration. A guarded cold start with no resident model restored 4B/64K and private HTTPS; the temporary server was stopped after checks. The final handoff records the exact pushed commit.
 
@@ -54,12 +54,16 @@ Saved Wazza Fantasy remains at **44 messages and one character**, SQLite integri
 
 Ignored evidence: `logs/stream-diagnosis/`, `logs/phase1-persistence.json`, `logs/story-delete-verification.json`, `logs/launcher-last-*.json`, control screenshots and `logs/before-test-story-cleanup.sqlite`. Raw story text, diagnostics and databases are not published. Browser tooling did not expose DevTools Network body-read logs; progressive HTTP reads, backend timings and DOM growth are the available streaming evidence. External-client denial and Speechify word highlighting were not independently tested.
 
-## Next checkpoint and operating notes
+## First multi-participant pass and operating notes
 
-**Next: local multi-participant identity**, specified in [ROADMAP.md](docs/ROADMAP.md): participant and optional linked character on each new input, explicit history/prompt identity, legacy compatibility and a frictionless single-player path. Implementation has not begun. Accounts, Discord transport and remote multiplayer are deferred.
+**Implemented locally:** [Player Characters](docs/player-characters.md) use the existing Character system with no separate participant/account model. Random Event replaces Story composer mode, requests a plausible scene surprise without forcing choices or combat, and leaves drafts/attachments in place. Attach is unchanged. Accounts, Discord transport and remote multiplayer are deferred.
+
+`npm run check:player-characters` passes against a migrated legacy SQLite fixture with captured model responses: legacy behaviour, one-player auto-selection, multiple actors, NPC/cross-story rejection, persistence/reopen, name snapshots, rename/delete/retry, Random Event streaming/retry and compaction identity. The 64K routing regression, lint and production build also pass. Browser acceptance uses a disposable database and a loopback simulated narrator, covering character creation, actor chips, attributed Do/Say, Random Event and save/resume. It verifies the UI/payload path, not live-model compliance with every narrative instruction.
+
+The production database was backed up with SQLite's online backup to ignored `logs/before-player-characters.sqlite`; its one story, 44 messages and one character were verified unchanged. No test stories were added there. The guarded launch was held at 5.5 GiB free VRAM against an 8 GiB requirement while image tests were running; no other workload was unloaded. The additive production migration will run on the next normal application start.
 
 The entertainment, lore-pack and narrative-rules direction is in [PRODUCT-VISION.md](docs/PRODUCT-VISION.md). World packs, integrated local voices, speech input and robust automatic state updates are roadmap items. No proprietary setting material is included.
 
-Procedure owners: [local text/context](docs/phase1-local.md), [Windows launcher](docs/windows-launcher.md), [Speechify/HTTPS](docs/speechify-https.md), [save/resume/delete](docs/save-resume.md), [model library](docs/model-library.md).
+Procedure owners: [development workflow](docs/development-workflow.md), [development log](docs/DEVELOPMENT-LOG.md), [Player Characters](docs/player-characters.md), [local text/context](docs/phase1-local.md), [Windows launcher](docs/windows-launcher.md), [Speechify/HTTPS](docs/speechify-https.md), [save/resume/delete](docs/save-resume.md), [model library](docs/model-library.md).
 
 Stories, credentials, local launcher policy, build outputs, EXE binaries, uploads/generated content and logs stay ignored. GitHub is a source checkpoint, not a story backup. Back up data with the app stopped, or use SQLite's online backup mechanism. An Ariadne context audit remains an unverified note for that separate project; this checkpoint makes no claim about its configuration.

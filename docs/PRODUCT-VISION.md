@@ -12,7 +12,7 @@ This document describes product intent. [Project status](../PROJECT-STATUS.md) r
 
 Player speaks or types an action → storyteller knows who acted → persistent world and character state informs the response → story advances → prose streams → a voice performs it → important moments can receive scene art → players choose again.
 
-At this checkpoint, typed turns, streamed prose, saved characters and stories, manual Speechify playback and manual illustration prompts work. Participant identity, speech input, integrated local voice performance, automatic state reconciliation and world-pack loading are future work. “Streams” describes progressive output once narration begins; model loading, prefill and compaction can still create an initial wait.
+At this checkpoint, typed turns with Player Character attribution, streamed prose, saved characters and stories, Random Event, manual Speechify playback and manual illustration prompts work. Speech input, integrated local voice performance, automatic state reconciliation and world-pack loading are future work. “Streams” describes progressive output once narration begins; model loading, prefill and compaction can still create an initial wait.
 
 The player should experience a story with room to act, rather than an AI control panel. They can ignore expected paths, retreat, recruit someone, explore, negotiate or fight. Choices should change the adventure and remain consequential later.
 
@@ -48,6 +48,6 @@ Combat needs tension and consequences. Risk, injury, failure and death can exist
 
 ## Shared stories begin with identity
 
-The next checkpoint comes from a real use case: several people participating through Discord while one machine runs the storyteller. Before networking, the local application must know who submitted each action and which character it belongs to.
+The first local pass comes from a real use case: several people eventually participating through Discord while one machine runs the storyteller. Before networking, the local application identifies the character submitting each action.
 
-Wazza / Kael checking a door for traps and Jack / Brom watching the corridor must be understood as two separate actors. A small local participant model and explicit message identity are the foundation. Keep single-player friction low and preserve older stories without inventing historical authorship. Accounts and remote transport can wait.
+Wazza / Kael checking a door for traps and Jack / Brom watching the corridor are separate actors. The existing Character system provides this identity: Player Characters appear as selectable composer chips, NPCs do not, and messages retain character attribution. Optional real-player names are metadata rather than narrator identities. Older stories retain their existing behaviour without invented historical authorship. Accounts and remote transport can wait.

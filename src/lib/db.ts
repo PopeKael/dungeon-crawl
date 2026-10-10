@@ -37,6 +37,9 @@ type MessageRow = {
   attachments_json: string;
   image_request_json: string | null;
   generated_image_json: string | null;
+  actor_character_id: string | null;
+  actor_character_name: string | null;
+  input_kind: string | null;
   created_at: string;
 };
 
@@ -44,6 +47,8 @@ type CharacterRow = {
   id: string;
   chat_id: string;
   name: string;
+  control_type: "npc" | "player";
+  player_name: string;
   details: string;
   inventory: string;
   skills: string;
@@ -115,6 +120,18 @@ function ensureSchema(db: Database.Database) {
   }
 
   const characterColumns = db.prepare(`PRAGMA table_info(characters)`).all() as Array<{ name: string }>;
+  if (!characterColumns.some((column) => column.name === "control_type")) {
+    db.exec(`ALTER TABLE characters ADD COLUMN control_type TEXT NOT NULL DEFAULT 'npc' CHECK (control_type IN ('npc', 'player'))`);
+  }
+  if (!characterColumns.some((column) => column.name === "player_name")) {
+    db.exec(`ALTER TABLE characters ADD COLUMN player_name TEXT NOT NULL DEFAULT ''`);
+  }
+  const messageColumns = db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
+  for (const column of ["actor_character_id", "actor_character_name", "input_kind"]) {
+    if (!messageColumns.some((item) => item.name === column)) {
+      db.exec(`ALTER TABLE messages ADD COLUMN ${column} TEXT`);
+    }
+  }
   if (!characterColumns.some((column) => column.name === "inventory")) {
     db.exec(`ALTER TABLE characters ADD COLUMN inventory TEXT NOT NULL DEFAULT ''`);
   }
@@ -247,6 +264,9 @@ function mapMessage(row: MessageRow): StoryMessage {
     attachments: parseJson<Attachment[]>(row.attachments_json, []),
     imageRequest: parseJson<ImageRequest | undefined>(row.image_request_json, undefined),
     generatedImage: parseJson<GeneratedImage | undefined>(row.generated_image_json, undefined),
+    actorCharacterId: row.actor_character_id || undefined,
+    actorCharacterName: row.actor_character_name || undefined,
+    inputKind: row.input_kind === "random-event" ? "random-event" : undefined,
   };
 }
 
@@ -255,6 +275,8 @@ function mapCharacter(row: CharacterRow): StoryCharacter {
     id: row.id,
     chatId: row.chat_id,
     name: row.name,
+    controlType: row.control_type,
+    playerName: row.player_name,
     details: row.details,
     inventory: row.inventory,
     skills: row.skills,
@@ -405,7 +427,7 @@ export function getChat(chatId: string): StoryChat | null {
   const messageRows = db
     .prepare(
       `
-        SELECT id, chat_id, role, content, attachments_json, image_request_json, generated_image_json, created_at
+        SELECT id, chat_id, role, content, attachments_json, image_request_json, generated_image_json, created_at, actor_character_id, actor_character_name, input_kind
         FROM messages
         WHERE chat_id = ?
         ORDER BY created_at ASC, rowid ASC
@@ -499,9 +521,12 @@ export function addMessage(chatId: string, message: StoryMessage) {
           attachments_json,
           image_request_json,
           generated_image_json,
+          actor_character_id,
+          actor_character_name,
+          input_kind,
           created_at
         )
-        VALUES (@id, @chatId, @role, @content, @attachmentsJson, @imageRequestJson, @generatedImageJson, @createdAt)
+        VALUES (@id, @chatId, @role, @content, @attachmentsJson, @imageRequestJson, @generatedImageJson, @actorCharacterId, @actorCharacterName, @inputKind, @createdAt)
       `,
     ).run({
       id: message.id,
@@ -511,6 +536,9 @@ export function addMessage(chatId: string, message: StoryMessage) {
       attachmentsJson: JSON.stringify(message.attachments || []),
       imageRequestJson: message.imageRequest ? JSON.stringify(message.imageRequest) : null,
       generatedImageJson: message.generatedImage ? JSON.stringify(message.generatedImage) : null,
+      actorCharacterId: message.actorCharacterId || null,
+      actorCharacterName: message.actorCharacterName || null,
+      inputKind: message.inputKind || null,
       createdAt: message.createdAt,
     });
 
@@ -599,7 +627,7 @@ export function listCharacters(chatId: string): StoryCharacter[] {
   const rows = getDatabase()
     .prepare(
       `
-        SELECT id, chat_id, name, details, inventory, skills, spells, portrait_json, created_at, updated_at
+        SELECT id, chat_id, name, control_type, player_name, details, inventory, skills, spells, portrait_json, created_at, updated_at
         FROM characters
         WHERE chat_id = ?
         ORDER BY updated_at DESC, created_at DESC
@@ -619,7 +647,7 @@ export function getCharactersByIds(chatId: string, characterIds: string[]) {
   const rows = getDatabase()
     .prepare(
       `
-        SELECT id, chat_id, name, details, inventory, skills, spells, portrait_json, created_at, updated_at
+        SELECT id, chat_id, name, control_type, player_name, details, inventory, skills, spells, portrait_json, created_at, updated_at
         FROM characters
         WHERE chat_id = ? AND id IN (${placeholders})
       `,
@@ -637,6 +665,8 @@ export function createCharacter(
   chatId: string,
   input: {
     name: string;
+    controlType?: "npc" | "player";
+    playerName?: string;
     details?: string;
     inventory?: string;
     skills?: string;
@@ -660,6 +690,8 @@ export function createCharacter(
           id,
           chat_id,
           name,
+          control_type,
+          player_name,
           details,
           inventory,
           skills,
@@ -672,6 +704,8 @@ export function createCharacter(
           @id,
           @chatId,
           @name,
+          @controlType,
+          @playerName,
           @details,
           @inventory,
           @skills,
@@ -685,6 +719,8 @@ export function createCharacter(
       id,
       chatId,
       name,
+      controlType: input.controlType || "npc",
+      playerName: input.playerName?.trim() || "",
       details: input.details?.trim() || "",
       inventory: input.inventory?.trim() || "",
       skills: input.skills?.trim() || "",
@@ -706,6 +742,8 @@ export function updateCharacter(
   characterId: string,
   updates: {
     name?: string;
+    controlType?: "npc" | "player";
+    playerName?: string;
     details?: string;
     inventory?: string;
     skills?: string;
@@ -740,6 +778,8 @@ export function updateCharacter(
           UPDATE characters
           SET
             name = @name,
+            control_type = @controlType,
+            player_name = @playerName,
             details = @details,
             inventory = @inventory,
             skills = @skills,
@@ -753,6 +793,8 @@ export function updateCharacter(
         id: characterId,
         chatId,
         name: nextName,
+        controlType: updates.controlType ?? existing.controlType,
+        playerName: updates.playerName !== undefined ? updates.playerName.trim() : existing.playerName,
         details: nextDetails,
         inventory: nextInventory,
         skills: nextSkills,

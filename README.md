@@ -9,8 +9,8 @@ The idea is a book created while you play and listen: choose an action, let the 
 ## Currently working
 
 - **Streaming narration:** local Ollama and custom OpenAI-compatible text backends, with an installed Ollama model selector. The tested Windows narrator is `qwen3.5:4b` with an explicit **65,536-token context**.
-- **Saved adventures:** a home screen with New story, Current story and Resume; automatic SQLite persistence, Save & return, and confirmed story deletion. Do / Say / Story, Continue, Retry, Erase and passage editing are available.
-- **Characters:** saved descriptions, portraits, inventory, skills and spells are included in the narrator's context. These are editable fields; automatic transactional world-state management is still a future step.
+- **Saved adventures:** a home screen with New story, Current story and Resume; automatic SQLite persistence, Save & return, and confirmed story deletion. Do / Say / Random Event, Continue, Retry, Erase and passage editing are available.
+- **Characters and local shared play:** mark existing characters as NPCs or human-controlled Player Characters. Actor chips select who acts or speaks; one Player Character is selected automatically. New turns save character attribution and explicitly identify the actor to the narrator. An optional real-player display name is metadata. Descriptions, portraits, inventory, skills and spells still enter narrator context; automatic state transactions remain future work.
 - **Long-story memory:** context budgeting and a stored rolling summary fold older passages into story memory. Compaction is best-effort and can delay the next passage before streaming begins; it is not perfect recall.
 - **Narration through Speechify:** Speak beneath a completed passage selects its prose and hands it to the installed Windows reader using Alt+F1. Audible playback has been confirmed over private HTTPS. This is a manual reader handoff, not built-in local speech generation or speech input.
 - **Illustration requests:** the narrator can save scene prompts with aspect and character references for manual copying. Upstream local image/ComfyUI paths remain available; this Windows checkpoint uses **Manual prompt only**, with no automatic local rendering.
@@ -37,7 +37,7 @@ Stories and settings stay in the local `data/` directory, which Git does not bac
 
 ## Direction / roadmap
 
-The next feature is **local participant identity**: select who acts, optionally link them to a story character, preserve that identity in history and explicitly tell the narrator. Existing single-player stories must remain compatible. Accounts, Discord transport and remote multiplayer are outside that first pass.
+The first **local multi-participant pass** uses the existing Character system, without a separate participant or account system. Existing characters default to NPCs, and old messages retain their original behaviour. Random Event asks for a plausible scene surprise while leaving player choices open. See [Player Characters](docs/player-characters.md) for setup and verification. Accounts, Discord transport and remote multiplayer remain outside this pass.
 
 Later work includes interchangeable user-supplied world/lore packs, stronger structured world-state continuity, integrated local voices and speech input, and illustrated-book scene plates at important moments. These are goals, not completed features. Mechanical resolution should serve the story, with earned consequences and continuity for established characters.
 
@@ -47,6 +47,8 @@ Read the fuller [product vision](docs/PRODUCT-VISION.md), the ordered [roadmap](
 
 | Guide | Purpose |
 |---|---|
+| [Development workflow](docs/development-workflow.md) / [development log](docs/DEVELOPMENT-LOG.md) | Validation, private-data boundaries, checkpoint and handover procedure |
+| [Player Characters](docs/player-characters.md) | Actor selection, attribution, Random Event and legacy compatibility |
 | [Local text and 64K context](docs/phase1-local.md) / [model library](docs/model-library.md) | Tested Qwen configuration, history budget and model selection |
 | [Windows executable](docs/windows-launcher.md) | Build, shortcuts, readiness policy and lifecycle controls |
 | [Speechify and private HTTPS](docs/speechify-https.md) | Reader handoff and deployment boundaries |

@@ -4,9 +4,9 @@ The app opens on an entrance headed Open Dungeon, with a short introduction and 
 
 During play, **Save & return** sits directly below Font Size in the desktop sidebar. On smaller screens it appears below the composer. It explicitly saves current settings, confirms the saved library, and returns home only on success. Completed turns and characters already live in SQLite. Saves are unavailable during narration, uploads, character saves or unfinished passage edits; errors leave the story open.
 
-Unsent input, input mode, attached references and reading position are stored as a per-story bookmark in this browser's local storage (`local-roleplay:bookmark:<chatId>`). These bookmarks survive reloads on the same origin/browser. They are not separate database save slots and do not copy to another browser. Submitted actions discard the old unsent bookmark. The current story ID continues to use the existing selected-chat key.
+Unsent input, input mode, attached references, selected Player Character and reading position are stored as a per-story bookmark in this browser's local storage (`local-roleplay:bookmark:<chatId>`). These bookmarks survive reloads on the same origin/browser. They are not separate database save slots and do not copy to another browser. Submitted actions discard the old unsent bookmark. The current story ID continues to use the existing selected-chat key. Random Event preserves the unsent draft and attached references.
 
-No database migration, model changes or network changes were needed.
+The original save/resume interface needed no database migration, model changes or network changes. The later [Player Character pass](player-characters.md) adds an additive database migration for character control and message attribution; the actor bookmark remains browser-local.
 
 ## Verification on 10 October 2026
 

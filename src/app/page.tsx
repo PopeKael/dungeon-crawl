@@ -42,6 +42,7 @@ import {
   useState,
 } from "react";
 import { cn } from "@/lib/cn";
+import { actorLabel, formatPlayerInput, playerCharacters, selectedPlayerActor } from "@/lib/player-actors";
 import { DEFAULT_STORY_SETTINGS, titleFromInput } from "@/lib/defaults";
 import { LOCAL_TEXT_MODELS, type LocalTextModelId, type TextProvider } from "@/lib/text-models";
 import type {
@@ -79,12 +80,11 @@ const SIDEBAR_ICONS = {
   support: "/sidebar-icons/support.png",
 } as const;
 
-type InputMode = "do" | "say" | "story";
+type InputMode = "do" | "say";
 
 const INPUT_MODES: Array<{ value: InputMode; label: string; placeholder: string }> = [
   { value: "do", label: "Do", placeholder: "What do you do?" },
   { value: "say", label: "Say", placeholder: "What do you say?" },
-  { value: "story", label: "Story", placeholder: "Write the next part of the story…" },
 ];
 
 const PROSE_SIZE_OPTIONS: Array<{ value: ProseSize; label: string; className: string }> = [
@@ -98,18 +98,6 @@ const PROSE_SIZE_OPTIONS: Array<{ value: ProseSize; label: string; className: st
   { value: "huge", label: "28px", className: "text-[1.75rem] leading-[2.75rem]" },
   { value: "giant", label: "32px", className: "text-[2rem] leading-[3rem]" },
 ];
-
-function formatPlayerInput(mode: InputMode, text: string): string {
-  const trimmed = text.trim();
-  if (mode === "say") {
-    const quoted = /^["'"].*["'"]$/.test(trimmed) ? trimmed : `"${trimmed}"`;
-    return `> You say ${quoted}`;
-  }
-  if (mode === "do") {
-    return `> ${trimmed}`;
-  }
-  return trimmed;
-}
 
 const STORY_PRESETS = [
   {
@@ -164,6 +152,8 @@ type ChatsResponse = { chats: StoryChatSummary[] };
 type CharacterResponse = { character: StoryCharacter };
 type CharacterDraft = {
   name: string;
+  controlType: "npc" | "player";
+  playerName: string;
   details: string;
   inventory: string;
   skills: string;
@@ -213,6 +203,8 @@ const DESKTOP_PANEL_ORDER: DesktopPanel[] = [
 function emptyCharacterDraft(): CharacterDraft {
   return {
     name: "",
+    controlType: "npc",
+    playerName: "",
     details: "",
     inventory: "",
     skills: "",
@@ -372,6 +364,9 @@ export default function Home() {
   const [imageWorkerMessage, setImageWorkerMessage] = useState("");
   const [newStoryOpen, setNewStoryOpen] = useState(false);
   const [inputMode, setInputMode] = useState<InputMode>("do");
+  const [selectedActorId, setSelectedActorId] = useState("");
+  const playerActors = playerCharacters(characters);
+  const selectedActor = selectedPlayerActor(characters, selectedActorId);
   const [editingId, setEditingId] = useState("");
   const [editDraft, setEditDraft] = useState("");
   const lastSavedSettingsRef = useRef(JSON.stringify(DEFAULT_STORY_SETTINGS));
@@ -397,6 +392,7 @@ export default function Home() {
     window.localStorage.setItem(SELECTED_CHAT_KEY, chat.id);
     setMessages(chat.messages);
     setCharacters(chat.characters || []);
+    setSelectedActorId("");
     setCharacterDraft(emptyCharacterDraft());
     setSettings(chat.settings);
     setAttachments([]);
@@ -408,9 +404,10 @@ export default function Home() {
       const bookmark = JSON.parse(window.localStorage.getItem(STORY_BOOKMARK_KEY + chat.id) || "null");
       if (isRecord(bookmark)) {
         if (typeof bookmark.input === "string") setInput(bookmark.input);
-        if (bookmark.inputMode === "do" || bookmark.inputMode === "say" || bookmark.inputMode === "story") {
+        if (bookmark.inputMode === "do" || bookmark.inputMode === "say") {
           setInputMode(bookmark.inputMode);
         }
+        if (typeof bookmark.actorCharacterId === "string") setSelectedActorId(bookmark.actorCharacterId);
         if (typeof bookmark.scrollTop === "number" && Number.isFinite(bookmark.scrollTop)) {
           resumeScrollRef.current = Math.max(0, bookmark.scrollTop);
         }
@@ -640,7 +637,7 @@ export default function Home() {
     setError("");
     try {
       window.localStorage.setItem(STORY_BOOKMARK_KEY + selectedChatId, JSON.stringify({
-        input, inputMode, attachments, scrollTop: storyScrollRef.current?.scrollTop ?? 0,
+        input, inputMode, attachments, actorCharacterId: selectedActor?.id, scrollTop: storyScrollRef.current?.scrollTop ?? 0,
       }));
       const response = await fetch(`/api/chats/${selectedChatId}`, {
         method: "PATCH",
@@ -855,6 +852,8 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
+          controlType: characterDraft.controlType,
+          playerName: characterDraft.playerName,
           details: characterDraft.details,
           inventory: characterDraft.inventory,
           skills: characterDraft.skills,
@@ -880,6 +879,8 @@ export default function Home() {
     characterId: string,
     updates: {
       name?: string;
+      controlType?: "npc" | "player";
+      playerName?: string;
       details?: string;
       inventory?: string;
       skills?: string;
@@ -1002,12 +1003,14 @@ export default function Home() {
   // sanitized message the server persisted, which replaces the streamed text.
   async function runTurn(opts: {
     chatId: string;
-    mode: "turn" | "kickoff" | "continue" | "retry" | "opening";
+    mode: "turn" | "kickoff" | "continue" | "retry" | "opening" | "random-event";
     input: string;
     history: StoryMessage[];
     settings: StorySettings;
     attachments?: Attachment[];
     userMessageId?: string;
+    actorCharacterId?: string;
+    retryOfMessageId?: string;
   }) {
     setBusy(true);
     setError("");
@@ -1068,6 +1071,8 @@ export default function Home() {
           mode: opts.mode,
           stream: true,
           userMessageId: opts.userMessageId,
+          actorCharacterId: opts.actorCharacterId,
+          retryOfMessageId: opts.retryOfMessageId,
           input: opts.input,
           messages: opts.history,
           attachments: opts.attachments || [],
@@ -1256,6 +1261,7 @@ export default function Home() {
         chatId: selectedChatId,
         mode: "retry",
         input: priorUser.content,
+        retryOfMessageId: priorUser.id,
         history: historyBeforeUser,
         attachments: priorUser.attachments,
         settings,
@@ -1380,19 +1386,21 @@ export default function Home() {
     event.preventDefault();
 
     const trimmed = input.trim();
-    if (!trimmed || busy || savingStory || !selectedChatId) {
+    if (!trimmed || busy || savingStory || !selectedChatId || (playerActors.length > 0 && !selectedActor)) {
       return;
     }
     // A submitted action must not reappear as an unsent paused draft.
     window.localStorage.removeItem(STORY_BOOKMARK_KEY + selectedChatId);
 
-    const formatted = formatPlayerInput(inputMode, trimmed);
+    const formatted = formatPlayerInput(inputMode, trimmed, selectedActor);
     const conversationBeforeTurn = messages;
     const turnAttachments = attachments;
     const userMessage: StoryMessage = {
       id: makeId(),
       role: "user",
       content: formatted,
+      actorCharacterId: selectedActor?.id,
+      actorCharacterName: selectedActor?.name,
       createdAt: new Date().toISOString(),
       attachments: turnAttachments,
     };
@@ -1405,11 +1413,23 @@ export default function Home() {
       chatId: selectedChatId,
       mode: "turn",
       userMessageId: userMessage.id,
+      actorCharacterId: selectedActor?.id,
       input: formatted,
       history: conversationBeforeTurn,
       attachments: turnAttachments,
       settings,
     });
+  }
+
+  async function randomEvent() {
+    if (busy || savingStory || loadingChat || libraryLoading || !selectedChatId) return;
+    const requestMessage: StoryMessage = {
+      id: makeId(), role: "user", content: "> Random Event",
+      createdAt: new Date().toISOString(), inputKind: "random-event",
+    };
+    setMessages((current) => [...current, requestMessage]);
+    await runTurn({ chatId: selectedChatId, mode: "random-event", input: "",
+      userMessageId: requestMessage.id, history: messages, settings });
   }
 
   // Accordion behavior: every section header stays visible; opening one
@@ -1460,6 +1480,8 @@ export default function Home() {
           onSave={(character) =>
             void updateCharacterById(character.id, {
               name: character.name,
+              controlType: character.controlType,
+              playerName: character.playerName,
               details: character.details,
               inventory: character.inventory,
               skills: character.skills,
@@ -1620,6 +1642,8 @@ export default function Home() {
           onSaveCharacter={(character) =>
             void updateCharacterById(character.id, {
               name: character.name,
+              controlType: character.controlType,
+              playerName: character.playerName,
               details: character.details,
               inventory: character.inventory,
               skills: character.skills,
@@ -1708,6 +1732,9 @@ export default function Home() {
                       ) : message.role === "user" ? (
                         <div className="ml-auto max-w-[92%] sm:max-w-2xl">
                           <div className="rounded-2xl rounded-br-md border border-stone-800/70 bg-stone-900/60 px-4 py-3 text-sm leading-6 text-stone-300">
+                            {message.actorCharacterId && (
+                              <p className="mb-1 text-xs font-semibold text-amber-200">{actorLabel(message, characters)}</p>
+                            )}
                             <p className="text-pretty whitespace-pre-wrap">{message.content}</p>
                             {!!message.attachments?.length && (
                               <AttachmentStrip attachments={message.attachments} className="mt-3" />
@@ -1832,6 +1859,22 @@ export default function Home() {
                     className="hidden"
                     onChange={(event) => handleFiles(event.target.files)}
                   />
+                  {playerActors.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3" role="group" aria-label="Acting player character">
+                      <span className="mr-1 text-xs text-stone-500">Act as</span>
+                      {playerActors.map((actor) => (
+                        <button key={actor.id} type="button" aria-pressed={selectedActor?.id === actor.id}
+                          disabled={busy || savingStory || loadingChat}
+                          onClick={() => setSelectedActorId(actor.id)}
+                          title={actor.playerName ? `Played by ${actor.playerName}` : undefined}
+                          className={cn("rounded-full border px-3 py-1 text-xs disabled:opacity-50",
+                            selectedActor?.id === actor.id ? "border-amber-300/60 bg-amber-200/10 text-amber-200" : "border-stone-700 text-stone-400 hover:text-stone-200")}>
+                          {actor.name}
+                        </button>
+                      ))}
+                      {!selectedActor && <span className="text-xs text-amber-200">Choose who acts next</span>}
+                    </div>
+                  )}
                   <textarea
                     id="story-input"
                     name="story-input"
@@ -1851,7 +1894,7 @@ export default function Home() {
                     disabled={libraryLoading || loadingChat || savingStory}
                   />
                   <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
                       <div className="flex rounded-lg border border-stone-800 bg-stone-950 p-0.5">
                         {INPUT_MODES.map((m) => (
                           <button
@@ -1868,6 +1911,12 @@ export default function Home() {
                             {m.label}
                           </button>
                         ))}
+                        <button type="button" onClick={() => void randomEvent()}
+                          disabled={busy || savingStory || loadingChat || libraryLoading || !selectedChatId}
+                          title="Introduce an unexpected, plausible event without choosing player actions"
+                          className="rounded-md px-2.5 py-1 text-xs font-medium text-stone-400 hover:text-amber-200 disabled:opacity-50">
+                          Random Event
+                        </button>
                       </div>
                       <button
                         type="button"
@@ -1888,7 +1937,7 @@ export default function Home() {
                       <button
                         type="submit"
                         aria-label="Send"
-                        disabled={busy || savingStory || !input.trim() || !selectedChatId || libraryLoading}
+                        disabled={busy || savingStory || !input.trim() || !selectedChatId || libraryLoading || (playerActors.length > 0 && !selectedActor)}
                         className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-amber-200 px-4 text-sm font-medium text-stone-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:bg-stone-800 disabled:text-stone-500"
                       >
                         <Send className="size-4" aria-hidden="true" />
@@ -1950,7 +1999,7 @@ function StoryHome({ chats, currentChat, loading, notice, error, onResume, onNew
           <h3 id="how-to-play" className="font-serif text-xl text-amber-50">How to play</h3>
           <ol className="mt-4 grid gap-4 text-sm leading-6 text-stone-400 sm:grid-cols-2">
             <li><span className="block font-medium text-stone-200">1. Choose your beginning</span>Start a new story, choose a setting and character, then let the narrator open the scene or write it yourself.</li>
-            <li><span className="block font-medium text-stone-200">2. Make your next move</span>Use Do for actions, Say for dialogue, or Story to guide the narration. Send your choice, or use Continue to let events unfold.</li>
+            <li><span className="block font-medium text-stone-200">2. Make your next move</span>Select your Player Character, then use Do for actions or Say for dialogue. Random Event introduces a plausible surprise; Continue lets the scene unfold. Stories without Player Characters keep the familiar single-player controls.</li>
             <li><span className="block font-medium text-stone-200">3. Read or listen</span>Read each passage at your own pace. Use Speak beneath it to hear it through Speechify.</li>
             <li><span className="block font-medium text-stone-200">4. Come back whenever you like</span>Save &amp; return keeps your place and brings you here. Resume story picks up without advancing the story.</li>
           </ol>
@@ -2278,7 +2327,7 @@ function MobileToolsSheet({
   onCreateCharacter: () => void;
   onLocalCharacterChange: (
     characterId: string,
-    updates: Partial<Pick<StoryCharacter, "name" | "details" | "inventory" | "skills" | "spells">>,
+    updates: Partial<Pick<StoryCharacter, "name" | "controlType" | "playerName" | "details" | "inventory" | "skills" | "spells">>,
   ) => void;
   onSaveCharacter: (character: StoryCharacter) => void;
   onPortraitFile: (characterId: string, file: File) => void;
@@ -2589,7 +2638,7 @@ function CharacterPanel({
   onCreate: () => void;
   onLocalChange: (
     characterId: string,
-    updates: Partial<Pick<StoryCharacter, "name" | "details" | "inventory" | "skills" | "spells">>,
+    updates: Partial<Pick<StoryCharacter, "name" | "controlType" | "playerName" | "details" | "inventory" | "skills" | "spells">>,
   ) => void;
   onSave: (character: StoryCharacter) => void;
   onPortraitFile: (characterId: string, file: File) => void;
@@ -2643,6 +2692,21 @@ function CharacterPanel({
           />
         </label>
 
+        <label className="block text-xs text-stone-400">
+          Character control
+          <select aria-label="New character control" value={draft.controlType}
+            onChange={(event) => onDraftChange((current) => ({ ...current, controlType: event.target.value as "npc" | "player" }))}
+            className="mt-1 w-full rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200">
+            <option value="npc">NPC — storyteller controlled</option>
+            <option value="player">Player Character — human controlled</option>
+          </select>
+        </label>
+        {draft.controlType === "player" && <label className="block text-xs text-stone-400">
+          Player display name (optional)
+          <input aria-label="New player display name" value={draft.playerName} maxLength={100}
+            onChange={(event) => onDraftChange((current) => ({ ...current, playerName: event.target.value }))}
+            className="mt-1 w-full rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200" />
+        </label>}
         <label className="block">
           <span className="mb-1 block text-xs font-medium uppercase text-stone-500">Details</span>
           <textarea
@@ -2805,6 +2869,7 @@ function CharacterPanel({
                   <span className="block truncate text-sm font-medium text-stone-200">
                     {character.name || "Unnamed character"}
                   </span>
+                  <span className="block text-xs text-stone-500">{character.controlType === "player" ? "Player Character" : "NPC"}</span>
                   {character.details && (
                     <span className="block truncate text-xs text-stone-500">
                       {character.details}
@@ -2836,6 +2901,23 @@ function CharacterPanel({
                 </div>
 
                 <div className="min-w-0 space-y-2">
+                  <select aria-label={`Character control for ${character.name}`} value={character.controlType}
+                    onChange={(event) => {
+                      const controlType = event.target.value as "npc" | "player";
+                      onLocalChange(character.id, { controlType });
+                      onSave({ ...character, controlType });
+                    }}
+                    className="w-full rounded border border-stone-800 bg-stone-950 px-2 py-1.5 text-xs text-stone-200">
+                    <option value="npc">NPC — storyteller controlled</option>
+                    <option value="player">Player Character — human controlled</option>
+                  </select>
+                  {character.controlType === "player" && <label className="block text-xs text-stone-400">
+                    Player display name (optional)
+                    <input aria-label={`Player display name for ${character.name}`} value={character.playerName} maxLength={100}
+                      onChange={(event) => onLocalChange(character.id, { playerName: event.target.value })}
+                      onBlur={() => onSave(character)}
+                      className="mt-1 w-full rounded border border-stone-800 bg-stone-950 px-2 py-1.5 text-xs text-stone-200" />
+                  </label>}
                   <input
                     value={character.name}
                     onChange={(event) =>

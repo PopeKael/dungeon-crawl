@@ -3,12 +3,14 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   addMessage,
+  getChat,
   getStorySummary,
   listCharacters,
   setStorySummary,
   updateChatTitleFromInput,
 } from "@/lib/db";
 import { serverEnv } from "@/lib/server-env";
+import { attributedInput, RANDOM_EVENT_DIRECTIVE } from "@/lib/player-actors";
 import { isConfiguredOllama, ollamaHistoryCharBudget } from "@/lib/ollama-routing";
 import {
   buildStoryMessages,
@@ -71,11 +73,16 @@ const messageSchema = z.object({
   content: z.string(),
   createdAt: z.string(),
   attachments: z.array(attachmentSchema).optional(),
+  actorCharacterId: z.string().optional(),
+  actorCharacterName: z.string().optional(),
+  inputKind: z.literal("random-event").optional(),
 });
 
 const requestSchema = z.object({
   chatId: z.string().optional(),
   userMessageId: z.string().optional(),
+  actorCharacterId: z.string().optional(),
+  retryOfMessageId: z.string().optional(),
   // turn     — a normal player action; the input is persisted as a user message.
   // kickoff  — write the opening passage from a directive (not persisted).
   // continue — advance the story with no player action (not persisted).
@@ -83,12 +90,12 @@ const requestSchema = z.object({
   //            already saved, so it is not persisted again.
   // opening — the player wrote the first passage themselves; store it verbatim
   //           as the opening narration, with no model call.
-  mode: z.enum(["turn", "kickoff", "continue", "retry", "opening"]).default("turn"),
+  mode: z.enum(["turn", "kickoff", "continue", "retry", "opening", "random-event"]).default("turn"),
   // When true the narration is delivered as NDJSON events (delta/done/error)
   // instead of a single JSON body. Opening mode and request-level failures
   // still answer with plain JSON.
   stream: z.boolean().default(false),
-  input: z.string().min(1),
+  input: z.string().default(""),
   messages: z.array(messageSchema).default([]),
   attachments: z.array(attachmentSchema).default([]),
   settings: z.object({
@@ -933,10 +940,11 @@ function requestStoryMessage(
 async function summarizeEvictedPassages(
   settings: StoryRequestSettings,
   existingSummary: string,
-  passages: Array<{ role: "user" | "assistant"; content: string }>,
+  passages: StoryMessage[],
+  characters: StoryCharacter[],
 ): Promise<string | null> {
   const transcript = passages
-    .map((message) => `${message.role === "user" ? "Player" : "Narrator"}: ${message.content}`)
+    .map((message) => `${message.role === "user" ? "Player" : "Narrator"}: ${attributedInput(message, characters)}`)
     .join("\n\n");
   const messages: OpenRouterMessage[] = [
     { role: "system", content: SUMMARIZER_SYSTEM },
@@ -959,18 +967,35 @@ async function summarizeEvictedPassages(
 export async function POST(request: Request) {
   const body = requestSchema.parse(await request.json());
   const characters = body.chatId ? listCharacters(body.chatId) : [];
+  let turnIdentity: Pick<StoryMessage, "actorCharacterId" | "actorCharacterName" | "inputKind"> = {};
+  let turnInput = body.input;
+  if (body.mode === "random-event") {
+    turnIdentity = { inputKind: "random-event" };
+    turnInput = RANDOM_EVENT_DIRECTIVE;
+  } else if (body.mode === "retry" && body.retryOfMessageId && body.chatId) {
+    const prior = getChat(body.chatId)?.messages.find((message) => message.id === body.retryOfMessageId && message.role === "user");
+    if (!prior) return Response.json({ error: "Original player message not found." }, { status: 400 });
+    turnIdentity = { actorCharacterId: prior.actorCharacterId, actorCharacterName: prior.actorCharacterName, inputKind: prior.inputKind };
+    turnInput = prior.content;
+  } else if (body.mode === "turn" && body.actorCharacterId) {
+    const actor = characters.find((character) => character.id === body.actorCharacterId && character.controlType === "player");
+    if (!actor) return Response.json({ error: "Choose a Player Character from this story." }, { status: 400 });
+    turnIdentity = { actorCharacterId: actor.id, actorCharacterName: actor.name };
+  }
+  if (!turnInput.trim()) return Response.json({ error: "Input is required." }, { status: 400 });
   const knownCharacterIds = new Set(characters.map((character) => character.id));
   const userMessage: StoryMessage = {
     id: body.userMessageId || crypto.randomUUID(),
     role: "user",
-    content: body.input,
+    content: body.mode === "random-event" ? "> Random Event" : turnInput,
+    ...turnIdentity,
     createdAt: new Date().toISOString(),
     attachments: body.attachments,
   };
 
-  if (body.chatId && body.mode === "turn") {
+  if (body.chatId && (body.mode === "turn" || body.mode === "random-event")) {
     addMessage(body.chatId, userMessage);
-    updateChatTitleFromInput(body.chatId, body.input);
+    if (body.mode === "turn") updateChatTitleFromInput(body.chatId, body.input);
   }
 
   // Player-authored opening: persist the text as the first narration passage
@@ -1009,6 +1034,7 @@ export async function POST(request: Request) {
         body.settings,
         stored.summary,
         evicted.slice(stored.coveredCount),
+        characters,
       );
       if (folded) {
         storySummary = folded;
@@ -1032,10 +1058,11 @@ export async function POST(request: Request) {
           ]
         : []),
     ],
-    body.input,
+    turnInput,
     body.settings,
     characters,
     storySummary,
+    turnIdentity,
   ) as OpenRouterMessage[];
   const characterVisionMessage = buildCharacterVisionMessage(characters);
   const messages = characterVisionMessage

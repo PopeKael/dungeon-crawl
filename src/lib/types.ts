@@ -58,6 +58,9 @@ export type StoryMessage = {
   attachments?: Attachment[];
   imageRequest?: ImageRequest;
   generatedImage?: GeneratedImage;
+  actorCharacterId?: string;
+  actorCharacterName?: string;
+  inputKind?: "random-event";
 };
 
 export type GeneratedImage = {
@@ -117,6 +120,8 @@ export type StoryCharacter = {
   id: string;
   chatId: string;
   name: string;
+  controlType: "npc" | "player";
+  playerName: string;
   details: string;
   inventory: string;
   skills: string;

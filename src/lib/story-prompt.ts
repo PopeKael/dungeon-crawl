@@ -1,4 +1,5 @@
 import type { AspectPreset, ImageMode, StoryCharacter, StoryMessage, StorySettings } from "@/lib/types";
+import { attributedInput } from "@/lib/player-actors";
 
 export type StoryModelResult = {
   storyText: string;
@@ -46,7 +47,10 @@ export function packStoryHistory(
   let keep = 0;
 
   for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const cost = messages[i].content.length + 80;
+    const message = messages[i];
+    const identityCost = message.actorCharacterId
+      ? message.actorCharacterId.length + (message.actorCharacterName?.length || 0) + 60 : 0;
+    const cost = message.content.length + 80 + identityCost;
     if (keep > 0 && used + cost > charBudget) {
       break;
     }
@@ -71,6 +75,7 @@ export function buildStoryMessages(
   settings: StorySettings,
   characters: StoryCharacter[] = [],
   storySummary = "",
+  turnIdentity: Pick<StoryMessage, "actorCharacterId" | "actorCharacterName" | "inputKind"> = {},
 ) {
   const recent = messages.map((message) => {
     const attachmentLine = message.attachments?.length
@@ -79,7 +84,7 @@ export function buildStoryMessages(
 
     return {
       role: message.role,
-      content: `${message.content}${attachmentLine}`,
+      content: `${attributedInput(message, characters)}${attachmentLine}`,
     };
   });
   const characterRoster = characters.length
@@ -88,6 +93,7 @@ export function buildStoryMessages(
           [
             `ID: ${character.id}`,
             `Name: ${character.name}`,
+            character.controlType === "player" ? "Human-controlled player character: leave their choices to the player." : "",
             character.details ? `Details: ${character.details}` : "",
             character.inventory ? `Inventory:\n${character.inventory}` : "",
             character.skills ? `Skills:\n${character.skills}` : "",
@@ -105,6 +111,9 @@ export function buildStoryMessages(
       role: "system",
       content: [
         DEFAULT_SYSTEM,
+        characters.some((character) => character.controlType === "player")
+          ? "Actions labelled with an acting character belong only to that character, not the whole party. Keep distinct player characters separate. Do not invent decisions or dialogue for human-controlled characters. Use character names rather than real player names."
+          : "",
         settings.imageGenerationEnabled ? IMAGE_SYSTEM : IMAGE_DISABLED_SYSTEM,
         `World / scenario:\n${settings.world || "A grounded modern roleplay scene with room to improvise."}`,
         `Tone / prose style:\n${settings.style || "Clean, dark text-adventure prose, intimate but not flowery."}`,
@@ -126,7 +135,7 @@ export function buildStoryMessages(
     ...recent,
     {
       role: "user",
-      content: input,
+      content: attributedInput({ content: input, ...turnIdentity }, characters),
     },
   ];
 }
