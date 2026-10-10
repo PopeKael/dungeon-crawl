@@ -2,7 +2,7 @@
 
 A local interactive audiobook and illustrated story engine with AI narration, persistent characters, player-driven adventures, voice, and scene art.
 
-**Based on [Open Dungeon by newideas99](https://github.com/newideas99/open-dungeon).** This fork preserves the [MIT licence](LICENSE) and original copyright attribution. Development currently lives on [`phase1-text-manual-images`](https://github.com/PopeKael/dungeon-crawl/tree/phase1-text-manual-images).
+**Based on [Open Dungeon by newideas99](https://github.com/newideas99/open-dungeon).** This fork preserves the [MIT licence](LICENSE) and original copyright attribution. The current project and normal checkpoints live on [`main`](https://github.com/PopeKael/dungeon-crawl/tree/main). The original `phase1-text-manual-images` branch is retained as a historical feature checkpoint.
 
 The idea is a book created while you play and listen: choose an action, let the storyteller advance the scene, then decide what happens next. The same opening can become a different adventure each time. Our direction centres on story, meaningful choices and continuity across sessions.
 
@@ -26,7 +26,7 @@ On the existing Windows installation, launch **Dungeon Crawl** from Start or Des
 For a fresh checkout, use Node.js 22+ and an already installed Ollama model:
 
 ```powershell
-git clone --branch phase1-text-manual-images https://github.com/PopeKael/dungeon-crawl.git
+git clone https://github.com/PopeKael/dungeon-crawl.git
 cd dungeon-crawl
 npm install
 ```

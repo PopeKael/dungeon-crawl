@@ -1,5 +1,13 @@
 # Development log
 
+## 10 October 2026 — Default-branch checkpoint alignment
+
+Diagnosed the displayed +2,449 / -245 counter: it exactly matched the committed feature branch difference against the old `main`, not unsaved or unpushed changes. The working tree was clean, and `phase1-text-manual-images` matched its GitHub tracking branch at `0e5613f99e5de20430d386cc0c69c132d183912f`.
+
+Fetched both remotes. The fork's default `main` and original project's `upstream/main` were both at `b0a79f96bf852be7b4e53908dff6a7f7c179da23` (v0.4.1). All upstream commits were already included; there was no newer upstream source to merge. Fast-forwarded local `main` to the tested Character feature checkpoint, with an identical application tree and no conflicts. `main` is now the normal checkpoint branch; the earlier feature branch remains available. Updated README, status and workflow to explain branch counters and deliberate upstream review. No application code, saved data, running services or global settings changed.
+
+Verification: exact application-tree equality during fast-forward, clean whitespace checks, and final push/local-remote SHA comparison. The final handoff records the maintenance SHA and clean status. Previously completed feature tests/build remain applicable because this maintenance step changes documentation only.
+
 ## 10 October 2026 — Character-based local shared storytelling
 
 Implemented the first multi-participant input pass using existing Characters. Characters now distinguish NPCs and human-controlled Player Characters, with an optional real-player display name. The composer excludes NPCs, automatically selects a sole Player Character, and requires a choice when several are available. Do/Say messages persist actor ID and a character-name snapshot; history, narrator context, summaries and Retry retain the original identity after renaming or deletion.

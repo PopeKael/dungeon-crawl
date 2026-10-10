@@ -2,7 +2,7 @@
 
 ## Repository and deployment
 
-Repository: [PopeKael/dungeon-crawl](https://github.com/PopeKael/dungeon-crawl). Development branch: `phase1-text-manual-images`. Based on [Open Dungeon by newideas99](https://github.com/newideas99/open-dungeon); the original MIT licence and copyright notice are preserved. The repository name and `main` remain unchanged. The last pushed checkpoint is `cbc96a41de35d5abc7c054250c185342596d41fb`. The first Character-based multi-participant pass is now implemented locally.
+Repository: [PopeKael/dungeon-crawl](https://github.com/PopeKael/dungeon-crawl). Normal working/default branch: `main`. Based on [Open Dungeon by newideas99](https://github.com/newideas99/open-dungeon); the original MIT licence and copyright notice are preserved. The Character-based multi-participant checkpoint `0e5613f99e5de20430d386cc0c69c132d183912f` was pushed on `phase1-text-manual-images`, then fast-forwarded into `main`. The former feature branch is retained as a historical checkpoint. The final handoff records the branch-maintenance commit and exact GitHub parity.
 
 Independent Windows project at `F:\AI\DungeonCrawler`. Ariadne is not a runtime dependency and was not changed. Canonical start point: `DungeonCrawler.exe`, also installed as **Dungeon Crawl** on Desktop and in the Start menu. The native tray requires adjacent Node application, scripts, assets, configuration and data. It is built locally, not distributed as an installer or release binary.
 
