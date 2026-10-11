@@ -1,121 +1,47 @@
 import { z } from "zod";
-import { generateComfyImage } from "@/lib/comfyui";
-import { updateMessageGeneratedImage } from "@/lib/db";
-import { serverEnv } from "@/lib/server-env";
-import { dimensionsForImage } from "@/lib/story-prompt";
-import type { GeneratedImage } from "@/lib/types";
+import { getChat, updateMessageGeneratedImage } from "@/lib/db";
+import { discardGeneratedImage, generateSdcppVulkanImage } from "@/lib/sdcpp-vulkan";
 
 export const runtime = "nodejs";
-
-const MAX_IMAGE_REFERENCES = 2;
+export const dynamic = "force-dynamic";
 
 const requestSchema = z.object({
-  messageId: z.string().optional(),
-  prompt: z.string().min(1),
-  mode: z.enum(["fast", "slow"]).default("slow"),
-  backend: z.enum(["mflux-hs", "sdnq-hs", "comfyui", "manual"]).default("mflux-hs"),
-  aspect: z.enum(["square", "portrait", "landscape"]).default("square"),
-  comfyUrl: z.string().trim().max(500).default(""),
-  comfyCheckpoint: z.string().trim().max(300).default(""),
-  seed: z.number().int().optional(),
-  references: z
-    .array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        type: z.string(),
-        url: z.string(),
-        dataUrl: z.string().optional(),
-      }),
-    )
-    .default([]),
+  chatId: z.string().min(1),
+  messageId: z.string().min(1),
 });
 
 export async function POST(request: Request) {
   const body = requestSchema.parse(await request.json());
-  if (body.backend === "manual") {
-    return Response.json(
-      { error: "Manual prompt mode does not run an image backend. Copy the prompt from the story." },
-      { status: 409 },
-    );
+  const chat = getChat(body.chatId);
+  if (!chat) return Response.json({ error: "Story not found." }, { status: 404 });
+
+  const message = chat.messages.find((item) => item.id === body.messageId);
+  if (!message || message.role !== "assistant") {
+    return Response.json({ error: "Story passage not found." }, { status: 404 });
   }
-  const references = body.references.slice(0, MAX_IMAGE_REFERENCES);
-
-  // ComfyUI runs its own server; the app talks to it directly and saves the
-  // finished PNG the same way the FLUX worker path does.
-  if (body.backend === "comfyui") {
-    try {
-      const generatedImage = await generateComfyImage({
-        url: body.comfyUrl,
-        checkpoint: body.comfyCheckpoint,
-        prompt: body.prompt,
-        mode: body.mode,
-        aspect: body.aspect,
-        seed: body.seed,
-        hasReferences: references.length > 0,
-      });
-
-      if (body.messageId) {
-        updateMessageGeneratedImage(body.messageId, generatedImage);
-      }
-
-      return Response.json(generatedImage);
-    } catch (error) {
-      return Response.json(
-        { error: error instanceof Error ? error.message : "ComfyUI generation failed." },
-        { status: 502 },
-      );
-    }
+  if (!message.imageRequest?.needed || !message.imageRequest.prompt) {
+    return Response.json({ error: "This passage has no saved image request." }, { status: 409 });
   }
 
-  const workerUrl = serverEnv("FLUX_WORKER_URL", "http://127.0.0.1:7869");
-  const dimensions = dimensionsForImage(body.mode, body.aspect);
-
+  const requestedIds = new Set(message.imageRequest.characterIds || []);
+  const characters = chat.characters.filter((character) => requestedIds.has(character.id)).slice(0, 2);
+  let generatedImage;
   try {
-    const upstream = await fetch(`${workerUrl.replace(/\/$/, "")}/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: body.prompt,
-        mode: body.mode,
-        backend: body.backend,
-        aspect: body.aspect,
-        width: dimensions.width,
-        height: dimensions.height,
-        steps: 4,
-        guidance: 0.0,
-        seed: body.seed,
-        references: references.map((reference) => ({
-          name: reference.name,
-          dataUrl: reference.dataUrl,
-          url: reference.url,
-        })),
-      }),
+    generatedImage = await generateSdcppVulkanImage({
+      scenePrompt: message.imageRequest.prompt,
+      characters,
     });
-
-    if (!upstream.ok) {
-      const detail = await upstream.text();
-      return Response.json(
-        { error: `Flux worker failed (${upstream.status}).`, detail: detail.slice(0, 1000) },
-        { status: 502 },
-      );
-    }
-
-    const generatedImage = (await upstream.json()) as GeneratedImage;
-
-    if (body.messageId) {
-      updateMessageGeneratedImage(body.messageId, generatedImage);
-    }
-
-    return Response.json(generatedImage);
   } catch (error) {
     return Response.json(
-      {
-        error: "Flux worker is not running.",
-        detail: error instanceof Error ? error.message : String(error),
-        expected: "Open Images and click Start, or run npm run image:server from the Open Dungeon folder.",
-      },
-      { status: 503 },
+      { error: error instanceof Error ? error.message : "The Vulkan image renderer failed." },
+      { status: 502 },
     );
   }
+
+  if (!updateMessageGeneratedImage(body.messageId, generatedImage)) {
+    discardGeneratedImage(generatedImage.url);
+    return Response.json({ error: "The image was generated, but its story passage is no longer available." }, { status: 409 });
+  }
+
+  return Response.json(generatedImage);
 }

@@ -24,7 +24,7 @@ Implementation and isolated regression coverage are described in [Player Charact
 1. **Stronger continuity:** structured world/character state, consequential changes, relationships, locations and unresolved events; improve and verify long-session memory before claiming reliable recall.
 2. **World/lore packs:** interchangeable original or privately user-supplied world/campaign bibles, with bounded context injection and no redistributed proprietary settings.
 3. **Voice performance and input:** evaluate integrated local narration, narrator voices and speech input; build on the current manual Speechify handoff.
-4. **Scene illustrations:** validate local generation on the target hardware, reference continuity and deliberate scene-plate pacing. Preserve manual prompts as a usable option.
+4. **Scene illustration quality:** generation speed and narrator coexistence are now measured on the RX 7800 XT, and automatic passage-linked image generation is implemented. Continue evaluating character consistency, reference continuity and deliberate scene-plate pacing; see [renderer results](image-rendering-results.md).
 5. **Shared/Discord play:** add transport only after local identity is solid; define access control, session ownership and remote input boundaries first.
 
 These are an ordered direction, not delivery dates. Story quality, meaningful choice, continuity and practical local operation remain the acceptance criteria.

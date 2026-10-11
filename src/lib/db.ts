@@ -184,9 +184,15 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 
 function normalizeSettings(settings?: Partial<StorySettings>): StorySettings {
   const defaultSettings = configuredDefaultStorySettings();
+  const legacySettings = (settings ?? {}) as Partial<StorySettings> & Record<string, unknown>;
+  const savedSettings = { ...legacySettings };
+  delete savedSettings.imageMode;
+  delete savedSettings.comfyUrl;
+  delete savedSettings.comfyCheckpoint;
+  delete savedSettings.aspect;
   const merged = {
     ...defaultSettings,
-    ...settings,
+    ...savedSettings,
   };
 
   // Migrate legacy OpenRouter chats into the unified custom provider. Runs
@@ -203,25 +209,8 @@ function normalizeSettings(settings?: Partial<StorySettings>): StorySettings {
     }
   }
 
-  if (
-    merged.aspect !== "square" &&
-    merged.aspect !== "portrait" &&
-    merged.aspect !== "landscape"
-  ) {
-    merged.aspect = defaultSettings.aspect;
-  }
-
   if (!isImageBackend(merged.imageBackend)) {
     merged.imageBackend = defaultSettings.imageBackend;
-  }
-
-  merged.comfyUrl =
-    typeof merged.comfyUrl === "string" ? merged.comfyUrl.trim().slice(0, 500) : "";
-  merged.comfyCheckpoint =
-    typeof merged.comfyCheckpoint === "string" ? merged.comfyCheckpoint.trim().slice(0, 300) : "";
-
-  if (merged.imageMode !== "fast" && merged.imageMode !== "slow") {
-    merged.imageMode = defaultSettings.imageMode;
   }
 
   if (typeof merged.imageGenerationEnabled !== "boolean") {
@@ -267,6 +256,13 @@ function mapChatSummary(row: ChatRow): StoryChatSummary {
 }
 
 function mapMessage(row: MessageRow): StoryMessage {
+  const generatedImage = parseJson<GeneratedImage | undefined>(row.generated_image_json, undefined);
+  if (generatedImage?.url.startsWith("/generated/")) {
+    // Next serves files in public/ as build-time assets. Generated PNGs are
+    // written at runtime, so serve both old and new records through the API.
+    generatedImage.url = generatedImage.url.replace(/^\/generated\//, "/api/generated/");
+  }
+
   return {
     id: row.id,
     role: row.role,
@@ -274,7 +270,7 @@ function mapMessage(row: MessageRow): StoryMessage {
     createdAt: row.created_at,
     attachments: parseJson<Attachment[]>(row.attachments_json, []),
     imageRequest: parseJson<ImageRequest | undefined>(row.image_request_json, undefined),
-    generatedImage: parseJson<GeneratedImage | undefined>(row.generated_image_json, undefined),
+    generatedImage,
     actorCharacterId: row.actor_character_id || undefined,
     actorCharacterName: row.actor_character_name || undefined,
     inputKind: row.input_kind === "random-event" ? "random-event" : undefined,

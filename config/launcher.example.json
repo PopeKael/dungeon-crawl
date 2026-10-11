@@ -6,5 +6,6 @@
   "busyEnginePercent": 25,
   "busy3DPercent": 15,
   "busySamplesRequired": 2,
-  "modelBudgetsGiB": { "qwen3.5:4b": 6 }
+  "modelBudgetsGiB": { "qwen3.5:4b": 6 },
+  "imageBackendBudgetsGiB": { "sd-cpp-vulkan": 6 }
 }

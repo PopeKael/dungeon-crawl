@@ -6,9 +6,9 @@ export type AspectPreset = "square" | "portrait" | "landscape";
 
 export type ImageMode = "fast" | "slow";
 
-export type ImageBackend = "mflux-hs" | "sdnq-hs" | "comfyui" | "manual";
+export type ImageBackend = "sd-cpp-vulkan";
 
-export const IMAGE_BACKENDS = ["mflux-hs", "sdnq-hs", "comfyui", "manual"] as const;
+export const IMAGE_BACKENDS = ["sd-cpp-vulkan"] as const;
 
 export function isImageBackend(value: unknown): value is ImageBackend {
   return typeof value === "string" && (IMAGE_BACKENDS as readonly string[]).includes(value);
@@ -90,12 +90,6 @@ export type StorySettings = {
   customApiKey: string;
   imageMode: ImageMode;
   imageBackend: ImageBackend;
-  // ComfyUI backend: server URL and checkpoint filename. Both optional —
-  // URL falls back to COMFYUI_URL env then http://127.0.0.1:8188, and an
-  // empty checkpoint uses the first one ComfyUI reports.
-  comfyUrl: string;
-  comfyCheckpoint: string;
-  aspect: AspectPreset;
   imageGenerationEnabled: boolean;
   autoImages: boolean;
   proseSize: ProseSize;

@@ -19,5 +19,7 @@ console.log(JSON.stringify({
   baseUrl: saved.customBaseUrl || env.OPENAI_COMPAT_BASE_URL || 'http://127.0.0.1:11434/v1',
   ollamaUrl: env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
   context: Number(env.LOCAL_TEXT_CONTEXT || 65536),
-  imageBackend: saved.imageBackend || env.DEFAULT_IMAGE_BACKEND || 'manual',
+  // The Windows launcher must budget/start the one supported local renderer.
+  // Saved settings or old environment files may still say "manual".
+  imageBackend: 'sd-cpp-vulkan',
 }));

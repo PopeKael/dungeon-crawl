@@ -12,7 +12,7 @@ This document describes product intent. [Project status](../PROJECT-STATUS.md) r
 
 Player speaks or types an action → storyteller knows who acted → persistent world and character state informs the response → story advances → prose streams → a voice performs it → important moments can receive scene art → players choose again.
 
-At this checkpoint, typed turns with Player Character attribution, streamed prose, saved characters and stories, Random Event, manual Speechify playback and manual illustration prompts work. Speech input, integrated local voice performance, automatic state reconciliation and world-pack loading are future work. “Streams” describes progressive output once narration begins; model loading, prefill and compaction can still create an initial wait.
+At this checkpoint, typed turns with Player Character attribution, streamed prose, saved characters and stories, Random Event, manual Speechify playback, and automatic passage-linked illustrations work. The Windows illustration path uses Dungeon-owned headless SDXL-Lightning over Vulkan; its warm speed and Qwen 4B/64K coexistence are measured in [project status](../PROJECT-STATUS.md). Speech input, integrated local voice performance, automatic state reconciliation and world-pack loading are future work. “Streams” describes progressive output once narration begins; model loading, prefill and compaction can still create an initial wait.
 
 The player should experience a story with room to act, rather than an AI control panel. They can ignore expected paths, retreat, recruit someone, explore, negotiate or fight. Choices should change the adventure and remain consequential later.
 
@@ -28,7 +28,7 @@ The player should experience a story with room to act, rather than an AI control
 
 **Visual storytelling.** Images should be illustrated-book scene plates: new locations, major characters, important discoveries, dramatic encounters or substantial scene changes. The aim is a meaningful visual beat, not an image for every paragraph. Character references should help maintain continuity.
 
-**Local-first.** Where practical, text inference, persistent state, voice and image generation should all be capable of running locally. The current text/state path is local; Speechify is an external reader and the active illustration path produces prompts for manual use. Optional remote backends should remain explicit choices, with clear data boundaries.
+**Local-first.** Where practical, text inference, persistent state, voice and image generation should all be capable of running locally. The current Windows text/state and illustration paths run locally; Speechify is an external reader. Optional remote backends should remain explicit choices, with clear data boundaries.
 
 ## World and lore packs
 

@@ -1,4 +1,9 @@
-# Phase 1: local text and manual illustrations
+# Phase 1: local text and manual illustrations (historical)
+
+This guide records the earlier manual-image acceptance setup; it is not the
+current Windows image workflow. Current story illustrations use Dungeon's
+headless Vulkan renderer and are enabled by default. See
+[Image generation](image-generation.md) for setup and measured performance.
 
 Use the existing Ollama server without running the upstream image setup or Windows installer prompts. No Python environment or image dependencies are needed.
 

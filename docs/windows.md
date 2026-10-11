@@ -2,11 +2,11 @@
 
 ## Launching
 
-Normal Dungeon Crawl launches use **DungeonCrawler.exe** or its Desktop/Start-menu shortcut. `Launch-Windows.bat` now forwards to that EXE; it must be built first. Follow the [Windows executable guide](windows-launcher.md) for build, local configuration, readiness policy and tray controls. **Exit** stops the owned web process and closes the tray, leaving shared Ollama running.
+Normal Dungeon Crawl launches use **DungeonCrawler.exe** or its Desktop/Start-menu shortcut. `Launch-Windows.bat` now forwards to that EXE; it must be built first. The executable shows a 640×480 splash with live startup stages, takes ownership of the local Ollama server, starts the configured Qwen 4B/64K narrator, Dungeon-owned Vulkan renderer, web app and gateway, then opens the browser. The tray offers **Open web page**, **Shut down**, and **Exit**; Exit remains available during startup and force-stops Dungeon-owned workloads before closing the tray. Shutdown also terminates the local Ollama server. Follow the [Windows executable guide](windows-launcher.md) for the lifecycle details.
 
-The tested profile is Qwen 3.5 4B, 64K context and manual illustration prompts. It does not install models or image dependencies. A terminal web launch can use other compatible backends; see [Phase 1 local configuration](phase1-local.md).
+The configured profile is Qwen 3.5 4B, 64K context and the existing SDXL-Lightning Vulkan renderer. Startup does not install models or image dependencies. A terminal web launch can use other compatible backends; see [Phase 1 local configuration](phase1-local.md).
 
-The sections below describe retained upstream maintenance/image tooling, which is separate from the guarded EXE. Explicit `-SetupImages`, `-SetupOllama` and `-CpuOnly` switches retain those paths. Avoid image setup/smoke commands during text/manual-image play. The separate upstream `windows\Stop-Windows.bat` also manages image workers; use tray Stop or Exit for the current game's owned web process.
+Legacy upstream image setup and smoke scripts remain available for maintenance, but are not used by the normal launcher. The current launcher manages the Dungeon-owned Vulkan renderer as part of Dungeon startup and shutdown; see [image generation](image-generation.md) for its measured configuration.
 
 ## Image setup
 

@@ -37,6 +37,15 @@ yarn-error.log*
 .pnpm-debug.log*
 /logs
 
+# Dungeon-owned headless ComfyUI / FLUX.2 Klein benchmark runtime and outputs
+/runtime/flux2-klein/
+/benchmarks/flux2-klein/
+/runtime/sdxl-lightning/
+/runtime/sdxl-lightning-rocm/
+/benchmarks/sdxl-lightning/
+/runtime/sd-cpp-vulkan/
+/benchmarks/sd-cpp-vulkan/
+
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example

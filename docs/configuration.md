@@ -3,6 +3,11 @@
 Copy `.env.example` to `.env.local` and adjust. Everything is optional; the
 defaults run fully local.
 
+The FLUX/ComfyUI environment variables below describe inherited upstream
+worker options. The normal Windows launcher uses Dungeon's separate
+stable-diffusion.cpp Vulkan renderer; see [Image generation](image-generation.md)
+for its local runtime and model paths.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local text server |

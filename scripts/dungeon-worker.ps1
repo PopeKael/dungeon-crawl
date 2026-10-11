@@ -1,4 +1,7 @@
-param([ValidateSet('Start','Stop','Restart','Readiness','Status')][string]$Action = 'Readiness')
+param(
+    [ValidateSet('Start','Stop','Restart','Readiness','Status')][string]$Action = 'Readiness',
+    [string]$ProgressPath = ''
+)
 $ErrorActionPreference = 'Stop'
 $taskRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Set-Location -LiteralPath $taskRoot
@@ -6,15 +9,68 @@ $logDirectory = Join-Path $taskRoot 'logs'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $statePath = Join-Path $logDirectory 'launcher-process.json'
 $gatewayStatePath = Join-Path $logDirectory 'launcher-gateway-process.json'
+$ollamaStatePath = Join-Path $logDirectory 'launcher-ollama-process.json'
+$script:imageBackendStartedByStart = $false
+$script:ollamaManagedByStart = $false
 $config = Get-Content (Join-Path $taskRoot 'config/launcher.json') -Raw | ConvertFrom-Json
 . (Join-Path $PSScriptRoot 'dungeon-readiness.ps1')
 . (Join-Path $PSScriptRoot 'dungeon-processes.ps1')
+
+function Set-LauncherProgress([int]$Percent, [int]$Step, [string]$Message) {
+    if (-not $ProgressPath) { return }
+    try {
+        [pscustomobject]@{
+            percent = [Math]::Max(0, [Math]::Min(100, $Percent))
+            step = $Step
+            steps = 6
+            message = $Message
+            updatedAt = [DateTime]::UtcNow.ToString('o')
+        } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ProgressPath -Encoding UTF8
+    } catch { }
+}
+
+if ($Action -in @('Start','Restart','Readiness')) {
+    Set-LauncherProgress 0 1 'Checking GPU load, memory headroom and saved settings'
+}
 
 function Get-OwnedWeb {
     Get-DungeonOwnedProcess $statePath
 }
 function Stop-OwnedWeb {
     Stop-DungeonOwnedProcesses @($gatewayStatePath, $statePath)
+}
+function Ensure-OwnedOllama([string]$OllamaUrl) {
+    $owned = Get-DungeonOwnedProcess $ollamaStatePath
+    $online = $false
+    try { $null = Invoke-RestMethod ($OllamaUrl.TrimEnd('/') + '/api/version') -TimeoutSec 2; $online = $true } catch { }
+    $port = ([uri]$OllamaUrl).Port
+    $listeners = @(Get-DungeonTcpListeners -LocalPort $port)
+    if ($online -and -not $listeners.Count) {
+        throw "Ollama responds on port $port, but its owning process could not be identified. Startup stopped without launching a duplicate server."
+    }
+    if ($owned -and $online -and @($listeners | Where-Object OwningProcess -eq $owned.Id).Count -gt 0) {
+        $script:ollamaManagedByStart = $true
+        return
+    }
+
+    # Replace any local Ollama instance that predates this launcher. That gives
+    # Dungeon one server process to stop when the user chooses Shut down or Exit.
+    $null = Stop-DungeonOllamaServer $OllamaUrl $ollamaStatePath -Force -RequireListener:$online
+    $ollama = (Get-Command ollama.exe -ErrorAction Stop).Source
+    $child = Start-Process -FilePath $ollama -ArgumentList 'serve' -WorkingDirectory $taskRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory 'launcher-ollama.stdout.log') -RedirectStandardError (Join-Path $logDirectory 'launcher-ollama.stderr.log') -PassThru
+    Save-DungeonOwnedProcess $child $ollamaStatePath "$ollama serve"
+    $script:ollamaManagedByStart = $true
+    for ($attempt = 0; $attempt -lt 40; $attempt++) {
+        try {
+            $null = Invoke-RestMethod ($OllamaUrl.TrimEnd('/') + '/api/version') -TimeoutSec 2
+            $listeners = @(Get-DungeonTcpListeners -LocalPort $port)
+            if (@($listeners | Where-Object OwningProcess -eq $child.Id).Count -gt 0) { return }
+        }
+        catch { Start-Sleep -Milliseconds 250 }
+        Start-Sleep -Milliseconds 250
+    }
+    try { Stop-DungeonOllamaServer $OllamaUrl $ollamaStatePath -Force | Out-Null } catch { }
+    throw 'Dungeon-owned Ollama did not become ready within 10 seconds. See logs/launcher-ollama.stderr.log.'
 }
 function Get-PrivateGateway {
     if (-not $config.PSObject.Properties['privateGateway']) {
@@ -25,12 +81,35 @@ function Get-PrivateGateway {
     if (-not $gateway -or ([uri]$config.appUrl).Scheme -ne 'https') { throw 'Invalid private gateway configuration.' }
     $gateway
 }
+function Invoke-ImageBackendAction([string]$BackendAction) {
+    $script = Join-Path $PSScriptRoot 'dungeon-sdcpp.ps1'
+    $operationState = Join-Path $logDirectory 'launcher-image-action-process.json'
+    $operationOutput = Join-Path $logDirectory 'launcher-image-action.stdout.log'
+    $operationError = Join-Path $logDirectory 'launcher-image-action.stderr.log'
+    $powershell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Action {1}' -f $script, $BackendAction
+    $child = Start-Process -FilePath $powershell -ArgumentList $arguments -WorkingDirectory $taskRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $operationOutput -RedirectStandardError $operationError
+    Save-DungeonOwnedProcess $child $operationState "$powershell $arguments"
+    try {
+        $child.WaitForExit()
+        $output = Get-Content -LiteralPath $operationOutput -Raw
+        $result = ($output.Trim() -split "`r?`n" | Select-Object -Last 1) | ConvertFrom-Json
+    } finally {
+        Remove-Item -LiteralPath $operationState -Force -ErrorAction SilentlyContinue
+        $child.Dispose()
+    }
+    if (-not $result.ok) {
+        $message = if ($result.error) { $result.error } elseif ($result.message) { $result.message } else { "Image backend $BackendAction failed." }
+        throw $message
+    }
+    $result
+}
 function Test-GatewayPort($gateway) {
     if (-not $gateway) { return }
     $legacyTarget = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\PortProxy\v4tov4\tcp' -ErrorAction SilentlyContinue).("$($gateway.bind)/$($gateway.port)")
     if ($legacyTarget) { throw 'The old Windows forwarding rule must be migrated once with configure-private-upstream.ps1 -Action Install as Administrator. Normal launches then need no elevation.' }
     $ownedGateway = Get-DungeonOwnedProcess $gatewayStatePath
-    $listeners = @(Get-NetTCPConnection -LocalPort $gateway.port -State Listen -ErrorAction SilentlyContinue)
+    $listeners = @(Get-DungeonTcpListeners -LocalPort $gateway.port)
     if (@($listeners | Where-Object { -not $ownedGateway -or $_.OwningProcess -ne $ownedGateway.ProcessId }).Count) {
         throw "Private gateway port $($gateway.port) belongs to an unmanaged process. Nothing was stopped."
     }
@@ -43,11 +122,11 @@ function Start-PrivateGateway($gateway) {
         $node = (Get-Command node.exe -ErrorAction Stop).Source
         $arguments = '"{0}" "{1}"' -f (Join-Path $PSScriptRoot 'dungeon-gateway.mjs'), (Join-Path $taskRoot 'config/launcher.json')
         $child = Start-Process -FilePath $node -ArgumentList $arguments -WorkingDirectory $taskRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory 'launcher-gateway.stdout.log') -RedirectStandardError (Join-Path $logDirectory 'launcher-gateway.stderr.log') -PassThru
-        Save-DungeonOwnedProcess $child $gatewayStatePath
+        Save-DungeonOwnedProcess $child $gatewayStatePath "$node $arguments"
         $ownedGateway = Get-DungeonOwnedProcess $gatewayStatePath
     }
     for ($attempt = 0; $attempt -lt 20; $attempt++) {
-        $listeners = @(Get-NetTCPConnection -LocalAddress $gateway.bind -LocalPort $gateway.port -State Listen -ErrorAction SilentlyContinue)
+        $listeners = @(Get-DungeonTcpListeners -LocalAddress $gateway.bind -LocalPort $gateway.port)
         if (@($listeners | Where-Object { $_.OwningProcess -eq $ownedGateway.ProcessId }).Count -eq 1) { return }
         if (-not (Get-DungeonOwnedProcess $gatewayStatePath)) { break }
         Start-Sleep -Milliseconds 250
@@ -64,19 +143,23 @@ function Get-Settings {
     $actual = $actual -replace '://localhost:', '://127.0.0.1:'
     $expected = $expected -replace '://localhost:', '://127.0.0.1:'
     if ($settings.provider -ne 'local' -and $actual -ne $expected) { throw 'This launcher currently safeguards the configured local Ollama backend only.' }
-    if ($settings.imageBackend -ne 'manual') { throw 'Startup budgeting currently covers Manual prompt only. Disable local image rendering before launch.' }
     $settings
 }
 function Test-Readiness {
+    Set-LauncherProgress 5 1 'Checking GPU load, memory headroom and saved settings'
     $settings = Get-Settings
     $gateway = Get-PrivateGateway
     Test-GatewayPort $gateway
     $snapshot = Get-DungeonSnapshot $settings $config
+    if (-not (Get-DungeonOwnedProcess $ollamaStatePath)) { $snapshot.ReusableModelGiB = 0 }
     if ($settings.context -ne 65536) { $snapshot.ModelBudgetGiB = $null }
-    Get-DungeonDecision $snapshot $config
+    $decision = Get-DungeonDecision $snapshot $config
+    Set-LauncherProgress 12 1 $(if ($decision.Ready) { 'System checks passed' } else { 'System checks need attention' })
+    $decision
 }
 function Start-Web($decision) {
     if (-not $decision.Ready) { throw ($decision.Reasons -join "`n") }
+    Set-LauncherProgress 15 2 'Checking Ollama and preparing the 4B narrator at 65K context'
     $settings = Get-Settings
     $gateway = Get-PrivateGateway
     Test-GatewayPort $gateway
@@ -85,21 +168,12 @@ function Start-Web($decision) {
     if (-not (Test-Path -LiteralPath (Join-Path $taskRoot '.next/BUILD_ID'))) { throw 'Production build is missing. Run npm run build in this project first.' }
     # Never replace a listener based solely on its port number.
     $owned = Get-OwnedWeb
-    $listeners = @(Get-NetTCPConnection -LocalPort $config.port -State Listen -ErrorAction SilentlyContinue)
+    $listeners = @(Get-DungeonTcpListeners -LocalPort $config.port)
     if (@($listeners | Where-Object { -not $owned -or $_.OwningProcess -ne $owned.ProcessId }).Count) {
         throw "Port $($config.port) belongs to an unmanaged process. Close that specific server before using this launcher; nothing was stopped."
     }
     $ollamaUrl = $settings.ollamaUrl.TrimEnd('/')
-    try { $null = Invoke-RestMethod ($ollamaUrl + '/api/version') -TimeoutSec 3 } catch {
-        if ($ollamaUrl -ne 'http://127.0.0.1:11434' -and $ollamaUrl -ne 'http://localhost:11434') { throw 'Configured Ollama is offline; remote services are not started by this launcher.' }
-        $ollama = (Get-Command ollama.exe -ErrorAction Stop).Source
-        Start-Process -FilePath $ollama -ArgumentList 'serve' -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory 'launcher-ollama.stdout.log') -RedirectStandardError (Join-Path $logDirectory 'launcher-ollama.stderr.log') | Out-Null
-        $online = $false
-        for ($attempt = 0; $attempt -lt 20; $attempt++) {
-            try { $null = Invoke-RestMethod ($ollamaUrl + '/api/version') -TimeoutSec 2; $online = $true; break } catch { Start-Sleep -Milliseconds 500 }
-        }
-        if (-not $online) { throw 'Ollama did not become ready. See logs/launcher-ollama.stderr.log.' }
-    }
+    Ensure-OwnedOllama $ollamaUrl
     $models = Invoke-RestMethod ($ollamaUrl + '/api/tags') -TimeoutSec 5
     if ($settings.model -notin @($models.models.name)) { throw "Model $($settings.model) is not installed. Nothing will be downloaded automatically." }
     # A model-only request loads the selected allocation without generating prose.
@@ -108,10 +182,16 @@ function Start-Web($decision) {
     $resident = Invoke-RestMethod ($ollamaUrl + '/api/ps') -TimeoutSec 5
     $model = @($resident.models | Where-Object { $_.name -eq $settings.model -and $_.context_length -eq $settings.context -and $_.size_vram -ge ($_.size * 0.99) })
     if ($model.Count -ne 1) { throw 'The requested 64K model is not fully on GPU. Startup is held; shared Ollama is left running.' }
+    Set-LauncherProgress 35 3 'Narrator is ready; checking the image renderer'
+    if ($settings.imageBackend -eq 'sd-cpp-vulkan') {
+        $backendResult = Invoke-ImageBackendAction 'Ensure'
+        $script:imageBackendStartedByStart = [bool]$backendResult.started
+    }
+    Set-LauncherProgress 60 4 'Image renderer is ready; starting Dungeon web app'
     if (-not $owned) {
         $arguments = '"{0}" start --hostname 127.0.0.1 --port {1}' -f $next, $config.port
         $child = Start-Process -FilePath $node -ArgumentList $arguments -WorkingDirectory $taskRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory 'launcher-web.stdout.log') -RedirectStandardError (Join-Path $logDirectory 'launcher-web.stderr.log') -PassThru
-        Save-DungeonOwnedProcess $child $statePath
+        Save-DungeonOwnedProcess $child $statePath "$node $arguments"
     }
     $ready = $false
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
@@ -121,14 +201,17 @@ function Start-Web($decision) {
         } catch { Start-Sleep -Milliseconds 500 }
     }
     if (-not $ready) { Stop-OwnedWeb; throw 'Web startup failed. See logs/launcher-web.stderr.log.' }
+    Set-LauncherProgress 78 5 'Web app is responding; starting its private gateway'
     try { Start-PrivateGateway $gateway } catch { Stop-OwnedWeb; throw }
     # Verify the actual user-facing route as well; do not silently substitute HTTP.
+    Set-LauncherProgress 90 6 'Checking the browser address and secure route'
     try {
         $page = Invoke-WebRequest $config.appUrl -UseBasicParsing -TimeoutSec 10
         if ($page.StatusCode -ne 200 -or $page.Content -notmatch '<title>Open Dungeon</title>') { throw 'The configured URL did not return the Dungeon application.' }
     } catch {
         throw "Dungeon processes are running, but the browser route failed verification. Check Synology and DNS/hosts. HTTPS error: $($_.Exception.Message)"
     }
+    Set-LauncherProgress 100 6 'Ready; opening Dungeon in your browser'
     [pscustomobject]@{ Ok = $true; Running = $true; Message = 'Ready: 64K model on GPU; private HTTPS verified.'; Url = $config.appUrl; Readiness = $decision }
 }
 
@@ -141,18 +224,50 @@ try {
         'Readiness' { $decision = Test-Readiness; $result = @{ Ok = $decision.Ready; Running = [bool](Get-OwnedWeb); Message = $(if ($decision.Ready) { 'Ready to start.' } else { $decision.Reasons -join "`n" }); Readiness = $decision } }
         'Status' {
             $web = Get-OwnedWeb; $gateway = Get-PrivateGateway; $edge = Get-DungeonOwnedProcess $gatewayStatePath
-            $webListening = $web -and @(Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $config.port -State Listen -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $web.ProcessId).Count -eq 1
-            $edgeListening = -not $gateway -or ($edge -and @(Get-NetTCPConnection -LocalAddress $gateway.bind -LocalPort $gateway.port -State Listen -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $edge.ProcessId).Count -eq 1)
+            $webListening = $web -and @(Get-DungeonTcpListeners -LocalAddress '127.0.0.1' -LocalPort $config.port | Where-Object OwningProcess -eq $web.Id).Count -eq 1
+            $edgeListening = -not $gateway -or ($edge -and @(Get-DungeonTcpListeners -LocalAddress $gateway.bind -LocalPort $gateway.port | Where-Object OwningProcess -eq $edge.Id).Count -eq 1)
             $healthy = $webListening -and $edgeListening
             $result = @{ Ok = $true; Running = [bool]$web -or [bool]$edge; ComponentsReady = $healthy; Message = $(if ($healthy) { 'Dungeon processes are running.' } elseif ($web -or $edge) { 'A Dungeon component stopped. Choose Start to restore the complete application.' } else { 'Dungeon is stopped.' }) }
         }
-        'Stop' { Stop-OwnedWeb; $result = @{ Ok = $true; Running = $false; Message = 'Dungeon web app and private gateway stopped. Shared Ollama and other applications were left running.' } }
-        'Start' { $result = Start-Web (Test-Readiness) }
-        'Restart' { $decision = Test-Readiness; if (-not $decision.Ready) { throw ($decision.Reasons -join "`n") }; Stop-OwnedWeb; $result = Start-Web $decision }
+        'Stop' {
+            $stopErrors = [Collections.Generic.List[string]]::new()
+            try { Stop-OwnedWeb } catch { $stopErrors.Add('Web services: ' + $_.Exception.Message) }
+            try {
+                if ($settings = Get-Settings) {
+                    if ($settings.imageBackend -eq 'sd-cpp-vulkan') { $null = Invoke-ImageBackendAction 'Stop' }
+                    $null = Stop-DungeonOllamaServer $settings.ollamaUrl $ollamaStatePath -Force
+                }
+            } catch { $stopErrors.Add('Dungeon AI workloads: ' + $_.Exception.Message) }
+            if ($stopErrors.Count) { throw ('Shutdown incomplete. ' + ($stopErrors -join ' ')) }
+            $result = @{ Ok = $true; Running = $false; Message = 'Dungeon web app, image renderer and Ollama server stopped.' }
+        }
+        'Start' {
+            $settings = Get-Settings
+            Ensure-OwnedOllama $settings.ollamaUrl
+            $result = Start-Web (Test-Readiness)
+        }
+        'Restart' {
+            $settings = Get-Settings
+            Ensure-OwnedOllama $settings.ollamaUrl
+            $decision = Test-Readiness
+            if (-not $decision.Ready) { throw ($decision.Reasons -join "`n") }
+            Stop-OwnedWeb
+            $result = Start-Web $decision
+        }
     }
     $result | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath (Join-Path $logDirectory ('launcher-last-' + $Action.ToLowerInvariant() + '.json'))
     $result | ConvertTo-Json -Depth 8 -Compress
 } catch {
+    if ($Action -in @('Start','Restart','Readiness')) {
+        if ($Action -in @('Start','Restart')) {
+            try { Stop-OwnedWeb } catch { }
+            if ($script:imageBackendStartedByStart) { try { $null = Invoke-ImageBackendAction 'Stop' } catch { } }
+            if ($script:ollamaManagedByStart) {
+                try { $settings = Get-Settings; $null = Stop-DungeonOllamaServer $settings.ollamaUrl $ollamaStatePath -Force } catch { }
+            }
+        }
+        Set-LauncherProgress 100 6 ('Startup stopped: ' + $_.Exception.Message)
+    }
     @{ Ok = $false; Running = [bool]((Test-Path -LiteralPath $statePath) -or (Test-Path -LiteralPath $gatewayStatePath)); Message = $_.Exception.Message } | ConvertTo-Json -Compress
     exit 1
 } finally {

@@ -1,4 +1,4 @@
-import type { AspectPreset, ImageMode, StoryCharacter, StoryMessage, StorySettings } from "@/lib/types";
+import type { StoryCharacter, StoryMessage, StorySettings } from "@/lib/types";
 import { attributedInput } from "@/lib/player-actors";
 
 export type StoryModelResult = {
@@ -24,13 +24,12 @@ Respect saved character inventory, skills, and spells as established story state
 
 const PLAYER_STATE_SYSTEM = `For Player Characters only, use saved Appearance, Wearing, Equipped, Inventory, Skills, and Spells as canonical state. Do not invent possessions, clothing, equipment, skills, or spells that are not established in those fields or prior visible story events. Do not add, remove, spend, or change established state unless visible story events clearly justify it. NPC behaviour remains governed by their established descriptions and the story.`;
 
-const IMAGE_SYSTEM = `You have access to a function tool named generate_image. Write the story passage as normal assistant text. If, and only if, a visual beat is truly useful, call generate_image once after writing the passage.
+const IMAGE_SYSTEM = `You have access to a function tool named generate_image. If, and only if, a visual beat is truly useful, call generate_image once before writing any visible story text. After the image request, continue with the story passage as normal assistant text.
 
 Use images sparingly: major character introductions, setting reveals, outfit/scene changes, or emotionally charged tableaux. Do not request an image for every turn.
 
 Do not put image prompts, captions, or tool details in the visible story passage.
-When writing generate_image.prompt for established characters, do not use character names as visual descriptors. Describe each person by visible physical features and whether they are a man or woman: age range, build, hair, face, skin tone, clothing, pose, expression, and lighting. Use names only in generate_image.characterIds via exact IDs.
-If an image should show one or two established characters, pass only their exact IDs in generate_image.characterIds. Use at most two IDs. Use [] when no saved character portrait should be referenced.`;
+When writing generate_image.prompt, focus on the scene, action, location, composition, mood, and lighting. Do not invent or restate established characters' appearance, clothing, or equipment; Dungeon Crawl adds their saved Appearance, Wearing, and Equipped fields. If an image should show one or two established characters, pass only their exact saved IDs in generate_image.characterIds. Use at most two IDs. Use [] when no saved characters should appear. Do not include text overlays.`;
 
 const IMAGE_DISABLED_SYSTEM =
   "Image generation is disabled for this story. Do not request images, describe image prompts, or mention image tooling.";
@@ -140,11 +139,7 @@ export function buildStoryMessages(
           : "",
         `Saved characters:\n${characterRoster}`,
         settings.imageGenerationEnabled
-          ? settings.imageBackend === "manual"
-            ? `Image requests are saved for manual illustration. Use generate_image normally for useful visual beats. Image aspect: ${settings.aspect}. Do not include text overlays.`
-            : `Image defaults: ${settings.imageBackend} backend, ${
-              settings.imageMode === "slow" ? "2048" : "1024"
-            } long side, ${settings.aspect} aspect. Do not include text overlays in generated images.`
+          ? "Images use Dungeon Crawl's local SDXL-Lightning Vulkan renderer at 960×536 landscape. Request an illustration only for a strong visual beat."
           : "",
       ]
         .filter(Boolean)
@@ -439,18 +434,4 @@ export function extractStoryText(raw: unknown): string {
   }
 
   return "";
-}
-
-export function dimensionsForImage(mode: ImageMode, aspect: AspectPreset) {
-  const longSide = mode === "slow" ? 2048 : 1024;
-
-  if (aspect === "portrait") {
-    return { width: Math.round(longSide * 0.75), height: longSide };
-  }
-
-  if (aspect === "landscape") {
-    return { width: longSide, height: Math.round(longSide * 0.75) };
-  }
-
-  return { width: longSide, height: longSide };
 }

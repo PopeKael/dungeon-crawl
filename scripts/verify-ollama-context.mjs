@@ -43,7 +43,7 @@ const fixture = {
   settings: {
     world: 'A fantasy library.', style: 'Concise prose.', textProvider: 'custom',
     localTextModel: 'gemma4:12b-it-qat', customBaseUrl: 'http://127.0.0.1:11434/v1',
-    customModel: 'qwen3.5:4b', customApiKey: '', imageMode: 'fast', imageBackend: 'manual',
+    customModel: 'qwen3.5:4b', customApiKey: '', imageMode: 'fast', imageBackend: 'sd-cpp-vulkan',
     aspect: 'landscape', imageGenerationEnabled: true, autoImages: true, proseSize: 'medium',
   },
 };

@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Cpu,
   Eraser,
-  FolderOpen,
   Heart,
   ImagePlus,
   Library,
@@ -46,11 +45,8 @@ import { actorLabel, formatPlayerInput, playerCharacters, selectedPlayerActor } 
 import { DEFAULT_STORY_SETTINGS, titleFromInput } from "@/lib/defaults";
 import { LOCAL_TEXT_MODELS, type LocalTextModelId, type TextProvider } from "@/lib/text-models";
 import type {
-  AspectPreset,
   Attachment,
   GeneratedImage,
-  ImageBackend,
-  ImageMode,
   ProseSize,
   StoryChat,
   StoryCharacter,
@@ -61,7 +57,7 @@ import type {
 
 const SELECTED_CHAT_KEY = "local-roleplay:selected-chat";
 const STORY_BOOKMARK_KEY = "local-roleplay:bookmark:";
-const MAX_IMAGE_REFERENCES = 2;
+const MAX_TURN_ATTACHMENTS = 2;
 const STORY_REQUEST_TIMEOUT_MS = 7 * 60 * 1000;
 
 const KICKOFF_DIRECTIVE =
@@ -166,26 +162,9 @@ type CharacterDraft = {
 type MobileTool = "characters" | "story" | "images" | "data";
 type DesktopPanel = "chats" | "characters" | "textModel" | "story" | "images" | "localData" | "support";
 type LocalTextStatus = { ok: boolean; installedModels: string[] };
-type ImageWorkerStatus = {
-  ok: boolean;
-  loaded?: boolean;
-  defaultBackend?: string;
-  mfluxDir?: string;
-  ultraRepo?: string;
-};
 type RuntimeDefaultsResponse = { settings?: StorySettings };
 type RuntimeHealthResponse = {
   localText?: LocalTextStatus;
-  flux?: ImageWorkerStatus;
-};
-type ImageWorkerActionResponse = {
-  ok: boolean;
-  status?: "running" | "starting";
-  message?: string;
-  error?: string;
-  path?: string;
-  logPath?: string;
-  health?: ImageWorkerStatus;
 };
 type PanelControlProps = {
   open?: boolean;
@@ -365,9 +344,6 @@ export default function Home() {
   const [mobileTool, setMobileTool] = useState<MobileTool>("characters");
   const [activeDesktopPanel, setActiveDesktopPanel] = useState<DesktopPanel | null>(null);
   const [localTextStatus, setLocalTextStatus] = useState<LocalTextStatus | null>(null);
-  const [imageWorkerStatus, setImageWorkerStatus] = useState<ImageWorkerStatus | null>(null);
-  const [imageWorkerBusy, setImageWorkerBusy] = useState(false);
-  const [imageWorkerMessage, setImageWorkerMessage] = useState("");
   const [newStoryOpen, setNewStoryOpen] = useState(false);
   const [inputMode, setInputMode] = useState<InputMode>("do");
   const [selectedActorId, setSelectedActorId] = useState("");
@@ -387,11 +363,6 @@ export default function Home() {
     () => chats.find((chat) => chat.id === selectedChatId),
     [chats, selectedChatId],
   );
-
-  const lastUserAttachments = useMemo(() => {
-    return [...messages].reverse().find((message) => message.role === "user")?.attachments || [];
-  }, [messages]);
-
 
   const applyChat = useCallback((chat: StoryChat, openStory = true) => {
     setSelectedChatId(chat.id);
@@ -571,12 +542,7 @@ export default function Home() {
 
   const applyRuntimeHealth = useCallback((payload: RuntimeHealthResponse) => {
     setLocalTextStatus(payload.localText ?? { ok: false, installedModels: [] });
-    setImageWorkerStatus(payload.flux ?? { ok: false, loaded: false });
   }, []);
-
-  const refreshRuntimeHealth = useCallback(async () => {
-    applyRuntimeHealth(await fetchRuntimeHealth());
-  }, [applyRuntimeHealth]);
 
   useEffect(() => {
     let cancelled = false;
@@ -745,58 +711,6 @@ export default function Home() {
     }
   }, []);
 
-  async function startImageWorker() {
-    setImageWorkerBusy(true);
-    setImageWorkerMessage("");
-    setError("");
-
-    try {
-      const response = await fetch("/api/image-worker", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "start" }),
-      });
-      const payload = await readApi<ImageWorkerActionResponse>(response);
-      setImageWorkerMessage(payload.message || "Image worker start requested.");
-      if (payload.health) {
-        setImageWorkerStatus(payload.health);
-      }
-      await refreshRuntimeHealth();
-    } catch (workerError) {
-      const message =
-        workerError instanceof Error ? workerError.message : "Image worker failed to start.";
-      setImageWorkerMessage(message);
-      setError(message);
-    } finally {
-      setImageWorkerBusy(false);
-    }
-  }
-
-  async function openImageModelFolder() {
-    setImageWorkerBusy(true);
-    setImageWorkerMessage("");
-    setError("");
-
-    try {
-      const response = await fetch("/api/image-worker", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "open-model-folder" }),
-      });
-      const payload = await readApi<ImageWorkerActionResponse>(response);
-      setImageWorkerMessage(
-        payload.path ? `Opened model folder: ${payload.path}` : "Opened model folder.",
-      );
-    } catch (workerError) {
-      const message =
-        workerError instanceof Error ? workerError.message : "Could not open the model folder.";
-      setImageWorkerMessage(message);
-      setError(message);
-    } finally {
-      setImageWorkerBusy(false);
-    }
-  }
-
   async function handleFiles(files: FileList | null) {
     if (!files?.length) {
       return;
@@ -807,10 +721,10 @@ export default function Home() {
 
     try {
       const uploaded: Attachment[] = [];
-      for (const file of Array.from(files).slice(0, MAX_IMAGE_REFERENCES)) {
+      for (const file of Array.from(files).slice(0, MAX_TURN_ATTACHMENTS)) {
         uploaded.push(await uploadImageFile(file));
       }
-      setAttachments((current) => [...current, ...uploaded].slice(0, MAX_IMAGE_REFERENCES));
+      setAttachments((current) => [...current, ...uploaded].slice(0, MAX_TURN_ATTACHMENTS));
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Image upload failed.");
     } finally {
@@ -820,27 +734,6 @@ export default function Home() {
       }
     }
   }
-
-  const referencesForImage = useCallback(
-    (characterIds: string[] | undefined, turnRefs: Attachment[]) => {
-      const characterRefs = (characterIds || []).flatMap((characterId) => {
-        const portrait = characters.find((character) => character.id === characterId)?.portrait;
-        return portrait ? [portrait] : [];
-      });
-      const seen = new Set<string>();
-
-      return [...characterRefs, ...turnRefs]
-        .filter((reference) => {
-          if (seen.has(reference.id)) {
-            return false;
-          }
-          seen.add(reference.id);
-          return true;
-        })
-        .slice(0, MAX_IMAGE_REFERENCES);
-    },
-    [characters],
-  );
 
   async function createCharacterFromDraft() {
     const name = characterDraft.name.trim();
@@ -964,13 +857,8 @@ export default function Home() {
     }
   }
 
-  async function requestGeneratedImage(
-    messageId: string,
-    prompt: string,
-    refs: Attachment[],
-    imageRequest?: StoryMessage["imageRequest"],
-  ) {
-    if (!settings.imageGenerationEnabled || settings.imageBackend === "manual") {
+  async function requestGeneratedImage(chatId: string, messageId: string) {
+    if (!settings.imageGenerationEnabled) {
       return;
     }
 
@@ -981,14 +869,8 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          chatId,
           messageId,
-          prompt,
-          mode: imageRequest?.mode || settings.imageMode,
-          backend: imageRequest?.backend || settings.imageBackend,
-          aspect: imageRequest?.aspect || settings.aspect,
-          comfyUrl: settings.comfyUrl,
-          comfyCheckpoint: settings.comfyCheckpoint,
-          references: refs,
         }),
       });
       const generatedImage = await readApi<GeneratedImage>(response);
@@ -1004,8 +886,41 @@ export default function Home() {
         return next;
       });
       void refreshChats();
-    } catch (imageError) {
-      setError(imageError instanceof Error ? imageError.message : "Image generation failed.");
+    } catch {
+      // The renderer may finish and persist the image even if the browser's
+      // POST response is interrupted by a proxy or transient connection error.
+      // Re-read this chat briefly before showing a failure so the placeholder
+      // can reconcile with the image already linked to its assistant message.
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        try {
+          const response = await fetch(`/api/chats/${chatId}`, { cache: "no-store" });
+          const payload = await readApi<ChatResponse>(response);
+          const generatedImage = payload.chat.messages.find((message) => message.id === messageId)
+            ?.generatedImage;
+
+          if (generatedImage) {
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === messageId ? { ...message, generatedImage } : message,
+              ),
+            );
+            setImageStatus((current) => {
+              const next = { ...current };
+              delete next[messageId];
+              return next;
+            });
+            void refreshChats();
+            return;
+          }
+        } catch {
+          // Keep checking while an interrupted request may still be rendering.
+        }
+
+        if (attempt < 9) {
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        }
+      }
+
       setImageStatus((current) => ({ ...current, [messageId]: "error" }));
     }
   }
@@ -1036,6 +951,8 @@ export default function Home() {
       timeoutId = window.setTimeout(() => controller.abort(), STORY_REQUEST_TIMEOUT_MS);
     };
     const placeholderId = makeId();
+    let streamedMessageId = placeholderId;
+    let imageRequestStarted = false;
     let streamedContent = "";
 
     const finishTurn = (payload: {
@@ -1051,25 +968,25 @@ export default function Home() {
         imageRequest: payload.imageRequest,
       };
 
-      setMessages((current) =>
-        streamedContent
-          ? current.map((message) => (message.id === placeholderId ? assistantMessage : message))
-          : [...current, assistantMessage],
-      );
+      setMessages((current) => {
+        const existing = current.find((message) => message.id === streamedMessageId);
+        if (!existing) return [...current, assistantMessage];
+        return current.map((message) =>
+          message.id === streamedMessageId
+            ? { ...assistantMessage, generatedImage: message.generatedImage }
+            : message,
+        );
+      });
       void refreshChats();
 
       if (
         opts.settings.imageGenerationEnabled &&
-        opts.settings.imageBackend !== "manual" &&
         payload.imageRequest?.needed &&
-        payload.imageRequest.prompt
+        payload.imageRequest.prompt &&
+        !imageRequestStarted
       ) {
-        void requestGeneratedImage(
-          assistantMessage.id,
-          payload.imageRequest.prompt,
-          referencesForImage(payload.imageRequest.characterIds, opts.attachments || []),
-          payload.imageRequest,
-        );
+        void requestGeneratedImage(opts.chatId, assistantMessage.id);
+        imageRequestStarted = true;
       }
     };
 
@@ -1123,22 +1040,60 @@ export default function Home() {
         content?: string;
         imageRequest?: StoryMessage["imageRequest"];
       }) => {
-        if (event.type === "delta" && typeof event.text === "string" && event.text) {
-          if (!streamedContent) {
-            setStreamingId(placeholderId);
-            setMessages((current) => [
+        if (event.type === "image-request" && event.id && event.imageRequest?.needed) {
+          const priorId = streamedMessageId;
+          streamedMessageId = event.id;
+          setStreamingId(event.id);
+          setMessages((current) => {
+            const prior = current.find((message) => message.id === priorId);
+            if (prior) {
+              return current.map((message) =>
+                message.id === priorId
+                  ? { ...message, id: event.id as string, imageRequest: event.imageRequest }
+                  : message,
+              );
+            }
+            return [
               ...current,
               {
-                id: placeholderId,
+                id: event.id as string,
                 role: "assistant",
-                content: event.text as string,
+                content: "",
                 createdAt: new Date().toISOString(),
+                imageRequest: event.imageRequest,
               },
-            ]);
+            ];
+          });
+          imageRequestStarted = true;
+          void requestGeneratedImage(opts.chatId, event.id);
+          return;
+        }
+        if (event.type === "delta" && typeof event.text === "string" && event.text) {
+          if (!streamedContent) {
+            setStreamingId(streamedMessageId);
+            setMessages((current) => {
+              const existing = current.find((message) => message.id === streamedMessageId);
+              if (existing) {
+                return current.map((message) =>
+                  message.id === streamedMessageId
+                    ? { ...message, content: message.content + event.text }
+                    : message,
+                );
+              }
+              return [
+                ...current,
+                {
+                  id: streamedMessageId,
+                  role: "assistant",
+                  content: event.text as string,
+                  createdAt: new Date().toISOString(),
+                },
+              ];
+            });
           } else {
             setMessages((current) =>
               current.map((message) =>
-                message.id === placeholderId
+                message.id === streamedMessageId
                   ? { ...message, content: message.content + event.text }
                   : message,
               ),
@@ -1196,8 +1151,8 @@ export default function Home() {
     } catch (storyError) {
       // Nothing was persisted for a failed stream; drop the partial passage
       // so the story matches what the server has.
-      if (streamedContent) {
-        setMessages((current) => current.filter((message) => message.id !== placeholderId));
+      if (streamedContent && !imageRequestStarted) {
+        setMessages((current) => current.filter((message) => message.id !== streamedMessageId));
       }
       setError(
         isAbortError(storyError)
@@ -1542,11 +1497,6 @@ export default function Home() {
           settings={settings}
           setSettings={setSettings}
           onImageGenerationEnabledChange={setImageGenerationEnabled}
-          imageWorkerStatus={imageWorkerStatus}
-          imageWorkerBusy={imageWorkerBusy}
-          imageWorkerMessage={imageWorkerMessage}
-          onStartImageWorker={() => void startImageWorker()}
-          onOpenImageModelFolder={() => void openImageModelFolder()}
           {...desktopPanelControls(panel)}
         />
       );
@@ -1675,11 +1625,6 @@ export default function Home() {
           settings={settings}
           setSettings={setSettings}
           onImageGenerationEnabledChange={setImageGenerationEnabled}
-          imageWorkerStatus={imageWorkerStatus}
-          imageWorkerBusy={imageWorkerBusy}
-          imageWorkerMessage={imageWorkerMessage}
-          onStartImageWorker={() => void startImageWorker()}
-          onOpenImageModelFolder={() => void openImageModelFolder()}
           localTextStatus={localTextStatus}
           clearingLocalData={clearingLocalData}
           onClearLocalData={() => void clearAllLocalData()}
@@ -1784,20 +1729,10 @@ export default function Home() {
                             (settings.imageGenerationEnabled && message.imageRequest?.needed)) && (
                             <ImageBeat
                               message={message}
-                              manual={settings.imageBackend === "manual"}
-                              characters={characters}
                               status={imageStatus[message.id]}
                               onRetry={() =>
-                                message.imageRequest?.prompt &&
-                                requestGeneratedImage(
-                                  message.id,
-                                  message.imageRequest.prompt,
-                                  referencesForImage(
-                                    message.imageRequest.characterIds,
-                                    lastUserAttachments,
-                                  ),
-                                  message.imageRequest,
-                                )
+                                selectedChatId && message.imageRequest?.prompt &&
+                                requestGeneratedImage(selectedChatId, message.id)
                               }
                             />
                           )}
@@ -2340,11 +2275,6 @@ function MobileToolsSheet({
   settings,
   setSettings,
   onImageGenerationEnabledChange,
-  imageWorkerStatus,
-  imageWorkerBusy,
-  imageWorkerMessage,
-  onStartImageWorker,
-  onOpenImageModelFolder,
   localTextStatus,
   clearingLocalData,
   onClearLocalData,
@@ -2371,11 +2301,6 @@ function MobileToolsSheet({
   settings: StorySettings;
   setSettings: Dispatch<SetStateAction<StorySettings>>;
   onImageGenerationEnabledChange: (enabled: boolean) => void;
-  imageWorkerStatus: ImageWorkerStatus | null;
-  imageWorkerBusy: boolean;
-  imageWorkerMessage: string;
-  onStartImageWorker: () => void;
-  onOpenImageModelFolder: () => void;
   localTextStatus: LocalTextStatus | null;
   clearingLocalData: boolean;
   onClearLocalData: () => void;
@@ -2473,11 +2398,6 @@ function MobileToolsSheet({
               settings={settings}
               setSettings={setSettings}
               onImageGenerationEnabledChange={onImageGenerationEnabledChange}
-              imageWorkerStatus={imageWorkerStatus}
-              imageWorkerBusy={imageWorkerBusy}
-              imageWorkerMessage={imageWorkerMessage}
-              onStartImageWorker={onStartImageWorker}
-              onOpenImageModelFolder={onOpenImageModelFolder}
               compact
             />
           )}
@@ -3549,123 +3469,10 @@ function StorySettingsPanel({
   );
 }
 
-// ComfyUI backend settings: server URL plus a checkpoint picker fed by the
-// server's own checkpoint list (via /api/comfy, which also proves it's up).
-function ComfySettings({
-  settings,
-  setSettings,
-  disabled,
-  idPrefix,
-}: {
-  settings: StorySettings;
-  setSettings: Dispatch<SetStateAction<StorySettings>>;
-  disabled: boolean;
-  idPrefix: string;
-}) {
-  const [status, setStatus] = useState<{
-    ok: boolean;
-    error?: string;
-    url?: string;
-    checkpoints: string[];
-  } | null>(null);
-  const [checking, setChecking] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(async () => {
-      setChecking(true);
-      try {
-        const response = await fetch("/api/comfy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: settings.comfyUrl }),
-          signal: controller.signal,
-        });
-        setStatus(await response.json());
-      } catch {
-        if (!controller.signal.aborted) {
-          setStatus({ ok: false, error: "Could not check ComfyUI.", checkpoints: [] });
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setChecking(false);
-        }
-      }
-    }, 400);
-
-    return () => {
-      controller.abort();
-      window.clearTimeout(timeout);
-    };
-  }, [settings.comfyUrl]);
-
-  return (
-    <div className="space-y-3 rounded border border-stone-800 bg-stone-950 px-3 py-3">
-      <div>
-        <p className="text-sm font-medium text-stone-200">
-          {checking ? "Checking ComfyUI…" : status?.ok ? "ComfyUI connected" : "ComfyUI not reachable"}
-        </p>
-        <p className="mt-1 text-xs leading-relaxed text-stone-500">
-          {status?.ok
-            ? `${status.checkpoints.length} ${status.checkpoints.length === 1 ? "checkpoint" : "checkpoints"} available at ${status.url}`
-            : status?.error || "Start ComfyUI, then set its URL here."}
-        </p>
-      </div>
-      <label className="block">
-        <span className="mb-1 block text-xs font-medium uppercase text-stone-500">Server URL</span>
-        <input
-          id={`${idPrefix}-comfy-url`}
-          name={`${idPrefix}-comfy-url`}
-          value={settings.comfyUrl}
-          disabled={disabled}
-          onChange={(event) =>
-            setSettings((current) => ({ ...current, comfyUrl: event.target.value }))
-          }
-          placeholder="http://127.0.0.1:8188"
-          className="w-full rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300 disabled:text-stone-600"
-        />
-      </label>
-      <label className="block">
-        <span className="mb-1 block text-xs font-medium uppercase text-stone-500">Checkpoint</span>
-        <select
-          id={`${idPrefix}-comfy-checkpoint`}
-          name={`${idPrefix}-comfy-checkpoint`}
-          value={settings.comfyCheckpoint}
-          disabled={disabled}
-          onChange={(event) =>
-            setSettings((current) => ({ ...current, comfyCheckpoint: event.target.value }))
-          }
-          className="w-full rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300 disabled:text-stone-600"
-        >
-          <option value="">Auto (first available)</option>
-          {status?.checkpoints.map((checkpoint) => (
-            <option key={checkpoint} value={checkpoint}>
-              {checkpoint}
-            </option>
-          ))}
-          {settings.comfyCheckpoint &&
-            !status?.checkpoints.includes(settings.comfyCheckpoint) && (
-              <option value={settings.comfyCheckpoint}>{settings.comfyCheckpoint}</option>
-            )}
-        </select>
-      </label>
-      <p className="text-xs leading-relaxed text-stone-600">
-        Images generate with the selected ComfyUI checkpoint. Character portrait references are
-        not used by this backend.
-      </p>
-    </div>
-  );
-}
-
 function ImageSettingsPanel({
   settings,
   setSettings,
   onImageGenerationEnabledChange,
-  imageWorkerStatus,
-  imageWorkerBusy,
-  imageWorkerMessage,
-  onStartImageWorker,
-  onOpenImageModelFolder,
   compact = false,
   open,
   onOpenChange,
@@ -3674,24 +3481,10 @@ function ImageSettingsPanel({
   settings: StorySettings;
   setSettings: Dispatch<SetStateAction<StorySettings>>;
   onImageGenerationEnabledChange: (enabled: boolean) => void;
-  imageWorkerStatus: ImageWorkerStatus | null;
-  imageWorkerBusy: boolean;
-  imageWorkerMessage: string;
-  onStartImageWorker: () => void;
-  onOpenImageModelFolder: () => void;
   compact?: boolean;
 } & PanelControlProps) {
   const idPrefix = compact ? "mobile" : "desktop";
   const imageControlsDisabled = !settings.imageGenerationEnabled;
-  const usingManual = settings.imageBackend === "manual";
-  const usingComfy = settings.imageBackend === "comfyui";
-  const workerRunning = Boolean(imageWorkerStatus?.ok);
-  const workerStatusLabel = workerRunning ? "Worker running" : "Worker stopped";
-  const workerDetail = workerRunning
-    ? imageWorkerStatus?.defaultBackend
-      ? `Default backend: ${imageWorkerStatus.defaultBackend}`
-      : "Ready for local generations"
-    : "Start it from here if images fail to generate.";
 
   return (
     <PanelSection
@@ -3705,7 +3498,7 @@ function ImageSettingsPanel({
       divided={divided}
     >
       <label className="flex items-center justify-between rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-300">
-        Image requests
+        Image generation
         <input
           id={`${idPrefix}-image-generation-enabled`}
           name={`${idPrefix}-image-generation-enabled`}
@@ -3715,96 +3508,11 @@ function ImageSettingsPanel({
           className="size-4 accent-amber-200"
         />
       </label>
-      <div className="space-y-2">
-        <span className="block text-xs font-medium uppercase text-stone-500">Backend</span>
-        <Segmented<ImageBackend>
-          value={settings.imageBackend}
-          options={[
-            { value: "manual", label: "Manual prompt only" },
-            { value: "mflux-hs", label: "MFLUX Mac" },
-            { value: "sdnq-hs", label: "SDNQ GPU/CPU" },
-            { value: "comfyui", label: "ComfyUI" },
-          ]}
-          disabled={imageControlsDisabled}
-          onChange={(imageBackend) =>
-            setSettings((current) => ({
-              ...current,
-              imageBackend,
-            }))
-          }
-        />
-      </div>
-      {usingManual ? (
-        <p className="text-xs leading-relaxed text-stone-400">
-          The narrator can request illustrations. Prompts appear in the story to copy into your image generator.
+      <div className="rounded border border-stone-800 bg-stone-950 px-3 py-3">
+        <p className="text-sm font-medium text-stone-200">stable-diffusion.cpp · Vulkan</p>
+        <p className="mt-1 text-xs leading-relaxed text-stone-500">
+          SDXL-Lightning 4-step · 960×536 landscape. Dungeon starts its owned renderer when an image is requested and stops it when Dungeon shuts down.
         </p>
-      ) : usingComfy ? (
-        <ComfySettings
-          settings={settings}
-          setSettings={setSettings}
-          disabled={imageControlsDisabled}
-          idPrefix={idPrefix}
-        />
-      ) : (
-        <div className="space-y-3 rounded border border-stone-800 bg-stone-950 px-3 py-3">
-          <div>
-            <p className="text-sm font-medium text-stone-200">{workerStatusLabel}</p>
-            <p className="mt-1 text-xs leading-relaxed text-stone-500">{workerDetail}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              disabled={imageControlsDisabled || imageWorkerBusy}
-              onClick={onStartImageWorker}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-stone-700 bg-stone-900/50 px-2 text-sm text-stone-200 hover:border-amber-700/60 hover:bg-stone-900 disabled:cursor-not-allowed disabled:border-stone-800 disabled:text-stone-600"
-            >
-              {imageWorkerBusy ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Play className="size-4" aria-hidden="true" />
-              )}
-              Start
-            </button>
-            <button
-              type="button"
-              disabled={imageWorkerBusy}
-              onClick={onOpenImageModelFolder}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-stone-700 bg-stone-900/50 px-2 text-sm text-stone-200 hover:border-amber-700/60 hover:bg-stone-900 disabled:cursor-not-allowed disabled:border-stone-800 disabled:text-stone-600"
-            >
-              <FolderOpen className="size-4" aria-hidden="true" />
-              Models
-            </button>
-          </div>
-          {imageWorkerMessage && (
-            <p className="text-xs leading-relaxed text-stone-500">{imageWorkerMessage}</p>
-          )}
-        </div>
-      )}
-      {!usingManual && <div className="space-y-2">
-        <span className="block text-xs font-medium uppercase text-stone-500">Size</span>
-        <Segmented<ImageMode>
-          value={settings.imageMode}
-          options={[
-            { value: "fast", label: "1024" },
-            // ComfyUI checkpoints (SDXL-class) degrade past ~1.5K long side.
-            { value: "slow", label: usingComfy ? "1344" : "2048" },
-          ]}
-          disabled={imageControlsDisabled}
-          onChange={(imageMode) => setSettings((current) => ({ ...current, imageMode }))}
-        />
-      </div>}
-      <div className="space-y-2">
-        <span className="block text-xs font-medium uppercase text-stone-500">Aspect</span>
-        <Segmented<AspectPreset>
-          value={settings.aspect}
-          options={[
-            { value: "square", label: "Square" },
-            { value: "portrait", label: "Portrait" },
-            { value: "landscape", label: "Landscape" },
-          ]}
-          disabled={imageControlsDisabled}
-          onChange={(aspect) => setSettings((current) => ({ ...current, aspect }))}
-        />
       </div>
       <label
         className={cn(
@@ -3812,16 +3520,14 @@ function ImageSettingsPanel({
           imageControlsDisabled && "text-stone-600",
         )}
       >
-        Auto image requests
+        Automatic story images
         <input
           id={`${idPrefix}-auto-images`}
           name={`${idPrefix}-auto-images`}
           type="checkbox"
           checked={settings.autoImages}
           disabled={imageControlsDisabled}
-          onChange={(event) =>
-            setSettings((current) => ({ ...current, autoImages: event.target.checked }))
-          }
+          onChange={(event) => setSettings((current) => ({ ...current, autoImages: event.target.checked }))}
           className="size-4 accent-amber-200 disabled:accent-stone-700"
         />
       </label>
@@ -4201,58 +3907,14 @@ function SpeakButton({ chatId, messageId, disabled }: {
   );
 }
 
-function ImageBeat({
-  message,
-  manual = false,
-  characters = [],
-  status,
-  onRetry,
-}: {
+function ImageBeat({ message, status, onRetry }: {
   message: StoryMessage;
-  manual?: boolean;
-  characters?: StoryCharacter[];
   status?: "loading" | "error";
   onRetry: () => void;
 }) {
   const isLoading = status === "loading";
   const isError = status === "error";
   const [promptExpanded, setPromptExpanded] = useState(false);
-  const [copyStatus, setCopyStatus] = useState("");
-
-  if (manual && message.imageRequest?.prompt && !message.generatedImage) {
-    const request = message.imageRequest;
-    const prompt = request.prompt!;
-    return (
-      <section aria-label="Image request" className="mt-6 space-y-3 rounded border border-amber-900/60 bg-stone-950 px-4 py-4 font-sans text-sm text-stone-300">
-        <h3 className="font-semibold tracking-wide text-amber-200">IMAGE REQUEST</h3>
-        <div>
-          <p className="font-semibold">Prompt:</p>
-          <p className="mt-1 select-text whitespace-pre-wrap leading-relaxed">{prompt}</p>
-        </div>
-        <p><strong>Reason:</strong> {request.reason || "Not supplied"}</p>
-        <p><strong>Aspect:</strong> {request.aspect || "square"}</p>
-        <p><strong>Character references:</strong> {request.characterIds?.length
-          ? request.characterIds.map((id) => {
-              const character = characters.find((item) => item.id === id);
-              return character ? `${character.name} (${id})` : id;
-            }).join(", ")
-          : "None supplied"}</p>
-        <button
-          type="button"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(prompt);
-              setCopyStatus("Copied");
-            } catch {
-              setCopyStatus("Copy unavailable. Select the prompt text and copy it manually.");
-            }
-          }}
-          className="rounded border border-stone-700 px-3 py-2 text-amber-200 hover:bg-stone-900"
-        >Copy prompt</button>
-        <p role="status" className="text-xs text-stone-400">{copyStatus}</p>
-      </section>
-    );
-  }
 
   if (message.generatedImage) {
     return (
@@ -4288,7 +3950,6 @@ function ImageBeat({
   }
 
   const pendingPrompt = message.imageRequest?.prompt;
-
   return (
     <div className="mt-6 rounded border border-stone-800 bg-stone-950 px-4 py-3 font-sans text-sm text-stone-400">
       <div className="flex items-center gap-3">
@@ -4299,13 +3960,7 @@ function ImageBeat({
         ) : (
           <ImagePlus className="size-4 text-amber-200" aria-hidden="true" />
         )}
-        <span>
-          {isError
-            ? "Image tool failed."
-            : isLoading
-              ? "Generating image beat..."
-              : "Image tool requested."}
-        </span>
+        <span>{isError ? "Image failed." : isLoading ? "Illustration is forming…" : "Illustration requested."}</span>
         {!isLoading && (
           <button
             type="button"
@@ -4317,20 +3972,9 @@ function ImageBeat({
         )}
       </div>
       {pendingPrompt && (
-        <div className="mt-2">
-          <p className={cn("text-xs leading-5 text-stone-600", promptExpanded ? "" : "line-clamp-2")}>
-            {pendingPrompt}
-          </p>
-          {pendingPrompt.length > 120 && (
-            <button
-              type="button"
-              onClick={() => setPromptExpanded((value) => !value)}
-              className="mt-1 text-xs text-amber-200 hover:text-amber-100"
-            >
-              {promptExpanded ? "Show less" : "See more"}
-            </button>
-          )}
-        </div>
+        <p className={cn("mt-2 text-xs leading-5 text-stone-600", promptExpanded ? "" : "line-clamp-2")}>
+          {pendingPrompt}
+        </p>
       )}
     </div>
   );

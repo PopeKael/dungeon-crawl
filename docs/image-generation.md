@@ -1,10 +1,31 @@
 # Image generation
 
-Inline images are optional — text play works without any image setup. Image
-requests made while no backend is available show a Generate button that
-succeeds once one is up.
+## Current Dungeon Crawl Windows renderer
 
-Three backends are exposed in the Images panel:
+The Windows build uses Dungeon-owned **stable-diffusion.cpp over Vulkan** with
+the SDXL-Lightning 4-step FP16 checkpoint on the RX 7800 XT. It runs headlessly
+on loopback; Dungeon owns readiness, job submission, and shutdown. The launcher
+prepares the renderer before opening the story app and shuts it down with the
+other Dungeon workloads.
+
+Automatic story images are enabled by default and can be disabled in the Images
+panel. When the narrator requests an illustration, Dungeon saves the hidden
+request against its assistant passage and dispatches it as soon as it arrives;
+visible narration continues while the renderer works. The passage shows a
+placeholder, then the resulting PNG. The image and request remain linked in
+saved story context, and a failed image can be retried from the passage.
+
+The tested settings are 960×536 landscape, Euler, `sgm_uniform`, 4 steps,
+CFG 1.0, and a 6 GiB managed Vulkan budget. While `qwen3.5:4b` remained resident
+at 65,536 context, three warm jobs took 11.94–11.95 seconds end to end and the
+peak adapter-wide dedicated memory was 14.096 GiB. Shared GPU memory peaked at
+7.433 GiB, so system RAM pressure remains a consideration. Full measurements,
+limitations, and comparisons are in [image-rendering-results.md](image-rendering-results.md).
+
+The remaining MFLUX, SDNQ, and ComfyUI sections describe inherited upstream
+options; those backends are not exposed by this Windows build.
+
+The upstream Open Dungeon reference documented these backends:
 
 | Backend | Hardware | Models |
 |---|---|---|

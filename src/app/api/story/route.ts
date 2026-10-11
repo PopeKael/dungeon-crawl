@@ -8,6 +8,7 @@ import {
   listCharacters,
   setStorySummary,
   updateChatTitleFromInput,
+  updateMessageContent,
 } from "@/lib/db";
 import { serverEnv } from "@/lib/server-env";
 import { attributedInput, RANDOM_EVENT_DIRECTIVE } from "@/lib/player-actors";
@@ -106,11 +107,8 @@ const requestSchema = z.object({
     customBaseUrl: z.string().trim().max(500).default(""),
     customModel: z.string().trim().max(200).default(""),
     customApiKey: z.string().trim().max(400).default(""),
-    imageMode: z.enum(["fast", "slow"]).default("slow"),
-    imageBackend: z.enum(["mflux-hs", "sdnq-hs", "comfyui", "manual"]).default("mflux-hs"),
-    comfyUrl: z.string().trim().max(500).default(""),
-    comfyCheckpoint: z.string().trim().max(300).default(""),
-    aspect: z.enum(["square", "portrait", "landscape"]).default("square"),
+    imageMode: z.enum(["fast", "slow"]).default("fast"),
+    imageBackend: z.literal("sd-cpp-vulkan").default("sd-cpp-vulkan"),
     imageGenerationEnabled: z.boolean().default(true),
     autoImages: z.boolean().default(true),
     proseSize: z.enum(PROSE_SIZE_VALUES).default("medium"),
@@ -407,6 +405,7 @@ async function forEachStreamLine(
 }
 
 type StreamedToolCall = { function: { name: string; arguments: string } };
+type ToolCallHandler = (calls: StreamedToolCall[]) => void;
 
 type UpstreamChatMessage = {
   content?: unknown;
@@ -502,6 +501,7 @@ async function requestCustomMessage(
   messages: OpenRouterMessage[],
   includeImageTool: boolean,
   onDelta?: StreamDeltaHandler,
+  onToolCalls?: ToolCallHandler,
 ): Promise<UpstreamResult> {
   const trimmedBase = (baseUrl || "").trim();
 
@@ -616,12 +616,13 @@ async function requestCustomMessage(
         stripImageParts(messages),
         includeImageTool,
         onDelta,
+        onToolCalls,
       );
     }
 
     // Some servers don't implement function tools; retry without auto images.
     if (includeImageTool && /tool|function|not support/i.test(text)) {
-      return requestCustomMessage(trimmedBase, resolvedModel, apiKey, messages, false, onDelta);
+      return requestCustomMessage(trimmedBase, resolvedModel, apiKey, messages, false, onDelta, onToolCalls);
     }
 
     return {
@@ -658,7 +659,10 @@ async function requestCustomMessage(
           return;
         }
         const record = parsed as {
-          choices?: Array<{ delta?: { content?: unknown; tool_calls?: unknown } }>;
+          choices?: Array<{
+            delta?: { content?: unknown; tool_calls?: unknown };
+            finish_reason?: string | null;
+          }>;
           error?: { message?: string } | string;
         };
         if (record.error) {
@@ -669,10 +673,6 @@ async function requestCustomMessage(
           return;
         }
         const delta = record.choices?.[0]?.delta;
-        if (typeof delta?.content === "string" && delta.content) {
-          contentParts.push(delta.content);
-          onDelta(delta.content);
-        }
         if (Array.isArray(delta?.tool_calls)) {
           for (const call of delta.tool_calls) {
             const raw = call as { index?: number; function?: { name?: unknown; arguments?: unknown } };
@@ -685,6 +685,14 @@ async function requestCustomMessage(
               target.function.arguments += raw.function.arguments;
             }
           }
+          const completeCalls = toolCalls.filter(Boolean) as StreamedToolCall[];
+          if (record.choices?.[0]?.finish_reason === "tool_calls" && completeCalls.length) {
+            onToolCalls?.(completeCalls);
+          }
+        }
+        if (typeof delta?.content === "string" && delta.content) {
+          contentParts.push(delta.content);
+          onDelta(delta.content);
         }
       });
     } catch {
@@ -713,6 +721,9 @@ async function requestCustomMessage(
     }
 
     const completedToolCalls = toolCalls.filter(Boolean) as StreamedToolCall[];
+    if (completedToolCalls.length) {
+      onToolCalls?.(completedToolCalls);
+    }
     return {
       message: {
         content: contentParts.join(""),
@@ -735,6 +746,7 @@ async function requestLocalMessage(
   disableThinking = true,
   onDelta?: StreamDeltaHandler,
   customOptions?: { maxOutputTokens: number; apiKey: string },
+  onToolCalls?: ToolCallHandler,
 ): Promise<UpstreamResult> {
   const baseUrl = serverEnv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").replace(/\/$/, "");
   const requestPayload: Record<string, unknown> = {
@@ -802,12 +814,12 @@ async function requestLocalMessage(
 
     // Some local models lack a tool-call template; retry the turn without auto images.
     if (includeImageTool && /does not support tools/i.test(text)) {
-      return requestLocalMessage(model, messages, false, disableThinking, onDelta, customOptions);
+      return requestLocalMessage(model, messages, false, disableThinking, onDelta, customOptions, onToolCalls);
     }
 
     // Models without a thinking channel reject the think parameter; retry without it.
     if (disableThinking && /does not support think/i.test(text)) {
-      return requestLocalMessage(model, messages, includeImageTool, false, onDelta, customOptions);
+      return requestLocalMessage(model, messages, includeImageTool, false, onDelta, customOptions, onToolCalls);
     }
 
     const hint = /not found/i.test(text)
@@ -841,18 +853,22 @@ async function requestLocalMessage(
         }
         const record = parsed as {
           message?: { content?: unknown; tool_calls?: unknown };
+          done?: boolean;
           error?: unknown;
         };
         if (record.error) {
           upstreamError = String(record.error);
           return;
         }
+        if (Array.isArray(record.message?.tool_calls)) {
+          toolCalls.push(...record.message.tool_calls);
+          // Ollama emits complete tool calls in one NDJSON record. Persist and
+          // notify the browser before forwarding any visible text from it.
+          onToolCalls?.(record.message.tool_calls as StreamedToolCall[]);
+        }
         if (typeof record.message?.content === "string" && record.message.content) {
           contentParts.push(record.message.content);
           onDelta(record.message.content);
-        }
-        if (Array.isArray(record.message?.tool_calls)) {
-          toolCalls.push(...record.message.tool_calls);
         }
       });
     } catch {
@@ -878,6 +894,10 @@ async function requestLocalMessage(
           { status: 502 },
         ),
       };
+    }
+
+    if (toolCalls.length) {
+      onToolCalls?.(toolCalls as StreamedToolCall[]);
     }
 
     return {
@@ -913,16 +933,17 @@ function requestStoryMessage(
   messages: OpenRouterMessage[],
   includeImageTool: boolean,
   onDelta?: StreamDeltaHandler,
+  onToolCalls?: ToolCallHandler,
 ): Promise<UpstreamResult> {
   if (settings.textProvider === "local") {
-    return requestLocalMessage(settings.localTextModel, messages, includeImageTool, true, onDelta);
+    return requestLocalMessage(settings.localTextModel, messages, includeImageTool, true, onDelta, undefined, onToolCalls);
   }
   const ollamaModel = configuredOllamaModel(settings);
   if (ollamaModel) {
     return requestLocalMessage(ollamaModel, messages, includeImageTool, true, onDelta, {
       maxOutputTokens: configuredMaxOutputTokens(),
       apiKey: settings.customApiKey || serverEnv("OPENAI_COMPAT_API_KEY"),
-    });
+    }, onToolCalls);
   }
   return requestCustomMessage(
     settings.customBaseUrl,
@@ -931,6 +952,7 @@ function requestStoryMessage(
     messages,
     includeImageTool,
     onDelta,
+    onToolCalls,
   );
 }
 
@@ -1071,15 +1093,32 @@ export async function POST(request: Request) {
   const includeImageTool = body.settings.imageGenerationEnabled && body.settings.autoImages;
 
   // Shared tail of a narration turn: extract, validate, persist.
+  let earlyImageMessage: StoryMessage | null = null;
+  const makeImageRequest = (toolCalls: unknown): StoryMessage["imageRequest"] => {
+    const args = parseGenerateImageToolCall(toolCalls);
+    if (!includeImageTool || !args?.prompt) return { needed: false };
+    return {
+      needed: true,
+      prompt: args.prompt,
+      mode: "fast",
+      backend: "sd-cpp-vulkan",
+      aspect: "landscape",
+      reason: args.reason,
+      characterIds: args.characterIds
+        ?.filter((id) => knownCharacterIds.has(id))
+        .slice(0, MAX_IMAGE_REFERENCES) || [],
+    };
+  };
+
   const finalizeTurn = (
     message: UpstreamChatMessage | undefined,
+    existingMessage?: StoryMessage | null,
   ):
     | { failure: { error: string; detail?: unknown }; assistantMessage?: undefined }
     | { assistantMessage: StoryMessage; failure?: undefined } => {
     const storyText = extractStoryText(message?.content);
-    const imageToolArgs = parseGenerateImageToolCall(message?.tool_calls);
-
-    if (!storyText && !imageToolArgs) {
+    const imageRequest = existingMessage?.imageRequest || makeImageRequest(message?.tool_calls);
+    if (!storyText && !imageRequest?.needed) {
       return {
         failure: {
           error: `${provider === "local" ? "The local model" : "The backend"} returned no story content.`,
@@ -1088,40 +1127,25 @@ export async function POST(request: Request) {
       };
     }
 
-    const characterIds =
-      imageToolArgs?.characterIds
-        ?.filter((id) => knownCharacterIds.has(id))
-        .slice(0, MAX_IMAGE_REFERENCES) || [];
     const assistantMessage: StoryMessage = {
-      id: crypto.randomUUID(),
+      id: existingMessage?.id || crypto.randomUUID(),
       role: "assistant",
       content: storyText || "The moment hangs there, waiting for what you do next.",
-      createdAt: new Date().toISOString(),
-      imageRequest:
-        includeImageTool && imageToolArgs?.prompt
-          ? {
-              needed: true,
-              prompt: imageToolArgs.prompt,
-              mode: body.settings.imageMode,
-              backend: body.settings.imageBackend,
-              aspect: body.settings.aspect,
-              reason: imageToolArgs.reason,
-              characterIds,
-            }
-          : { needed: false },
+      createdAt: existingMessage?.createdAt || new Date().toISOString(),
+      imageRequest,
     };
 
     if (body.chatId) {
       addMessage(body.chatId, assistantMessage);
+      if (existingMessage) updateMessageContent(assistantMessage.id, assistantMessage.content);
     }
 
     return { assistantMessage };
   };
 
   if (body.stream) {
-    // NDJSON events: {type:"delta"} chunks of visible story text as the model
-    // writes, then one {type:"done"} carrying the sanitized persisted message
-    // the client reconciles to, or {type:"error"}.
+    // NDJSON sends an image-request event as soon as the complete hidden tool
+    // call arrives, then visible delta chunks and a final persisted message.
     const encoder = new TextEncoder();
     const filter = createStreamingArtifactFilter();
     let cancelled = false;
@@ -1139,9 +1163,28 @@ export async function POST(request: Request) {
           }
         };
 
+        const captureImageRequest: ToolCallHandler = (calls) => {
+          if (earlyImageMessage) return;
+          const imageRequest = makeImageRequest(calls);
+          if (!imageRequest?.needed || !imageRequest.prompt) return;
+          earlyImageMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            imageRequest,
+          };
+          if (body.chatId) addMessage(body.chatId, earlyImageMessage);
+          send({
+            type: "image-request",
+            id: earlyImageMessage.id,
+            imageRequest: earlyImageMessage.imageRequest,
+          });
+        };
+
         void (async () => {
           try {
-            const { message, error } = await requestStoryMessage(
+            const firstResult = await requestStoryMessage(
               body.settings,
               messages,
               includeImageTool,
@@ -1151,7 +1194,10 @@ export async function POST(request: Request) {
                   send({ type: "delta", text: visible });
                 }
               },
+              captureImageRequest,
             );
+            let message = firstResult.message;
+            const error = firstResult.error;
 
             if (error) {
               const payload = (await error.json().catch(() => null)) as {
@@ -1166,12 +1212,45 @@ export async function POST(request: Request) {
               return;
             }
 
+            // Some tool-capable models end their response at the tool call.
+            // Continue narration in a second streamed response while the
+            // browser renders the image requested above.
+            if (earlyImageMessage && !extractStoryText(message?.content)) {
+              const continuation: OpenRouterMessage = {
+                role: "system",
+                content:
+                  "The hidden illustration request has been saved and dispatched. Continue by writing the visible story passage for this turn. Do not request another image or mention image generation.",
+              };
+              const continued = await requestStoryMessage(
+                body.settings,
+                [...messages, continuation],
+                false,
+                (text) => {
+                  const visible = filter.push(text);
+                  if (visible) send({ type: "delta", text: visible });
+                },
+              );
+              if (continued.error) {
+                const payload = (await continued.error.json().catch(() => null)) as {
+                  error?: string;
+                  detail?: unknown;
+                } | null;
+                send({
+                  type: "error",
+                  error: payload?.error || "Story continuation failed.",
+                  ...(payload?.detail !== undefined ? { detail: payload.detail } : {}),
+                });
+                return;
+              }
+              message = continued.message;
+            }
+
             const trailing = filter.flush();
             if (trailing) {
               send({ type: "delta", text: trailing });
             }
 
-            const result = finalizeTurn(message);
+            const result = finalizeTurn(message, earlyImageMessage);
             if (result.failure) {
               send({ type: "error", ...result.failure });
               return;
