@@ -123,6 +123,9 @@ export type StoryCharacter = {
   controlType: "npc" | "player";
   playerName: string;
   details: string;
+  appearance: string;
+  wearing: string;
+  equipped: string;
   inventory: string;
   skills: string;
   spells: string;

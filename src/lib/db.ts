@@ -50,6 +50,9 @@ type CharacterRow = {
   control_type: "npc" | "player";
   player_name: string;
   details: string;
+  appearance: string;
+  wearing: string;
+  equipped: string;
   inventory: string;
   skills: string;
   spells: string;
@@ -91,6 +94,9 @@ function ensureSchema(db: Database.Database) {
       chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       details TEXT NOT NULL DEFAULT '',
+      appearance TEXT NOT NULL DEFAULT '',
+      wearing TEXT NOT NULL DEFAULT '',
+      equipped TEXT NOT NULL DEFAULT '',
       inventory TEXT NOT NULL DEFAULT '',
       skills TEXT NOT NULL DEFAULT '',
       spells TEXT NOT NULL DEFAULT '',
@@ -140,6 +146,11 @@ function ensureSchema(db: Database.Database) {
   }
   if (!characterColumns.some((column) => column.name === "spells")) {
     db.exec(`ALTER TABLE characters ADD COLUMN spells TEXT NOT NULL DEFAULT ''`);
+  }
+  for (const column of ["appearance", "wearing", "equipped"]) {
+    if (!characterColumns.some((item) => item.name === column)) {
+      db.exec(`ALTER TABLE characters ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`);
+    }
   }
 }
 
@@ -278,6 +289,9 @@ function mapCharacter(row: CharacterRow): StoryCharacter {
     controlType: row.control_type,
     playerName: row.player_name,
     details: row.details,
+    appearance: row.appearance,
+    wearing: row.wearing,
+    equipped: row.equipped,
     inventory: row.inventory,
     skills: row.skills,
     spells: row.spells,
@@ -348,23 +362,60 @@ export function setStoredDefaultSettings(settings: Partial<StorySettings>) {
   });
 }
 
-export function createChat(settings?: Partial<StorySettings>, title = DEFAULT_CHAT_TITLE): StoryChat {
+export function createChat(
+  settings?: Partial<StorySettings>,
+  title = DEFAULT_CHAT_TITLE,
+  playerCharacter?: {
+    name: string;
+    details?: string;
+    appearance?: string;
+    wearing?: string;
+    equipped?: string;
+    inventory?: string;
+    skills?: string;
+    spells?: string;
+  },
+): StoryChat {
   const db = getDatabase();
   const now = new Date().toISOString();
   const chatId = crypto.randomUUID();
 
-  db.prepare(
-    `
+  const create = db.transaction(() => {
+    db.prepare(`
       INSERT INTO chats (id, title, settings_json, created_at, updated_at)
       VALUES (@id, @title, @settingsJson, @createdAt, @updatedAt)
-    `,
-  ).run({
-    id: chatId,
-    title,
-    settingsJson: JSON.stringify(normalizeSettings(settings)),
-    createdAt: now,
-    updatedAt: now,
+    `).run({
+      id: chatId,
+      title,
+      settingsJson: JSON.stringify(normalizeSettings(settings)),
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (playerCharacter) {
+      const name = playerCharacter.name.trim();
+      if (!name) throw new Error("Player Character name is required.");
+      db.prepare(`
+        INSERT INTO characters (
+          id, chat_id, name, control_type, player_name, details, appearance,
+          wearing, equipped, inventory, skills, spells, portrait_json, created_at, updated_at
+        ) VALUES (
+          @id, @chatId, @name, 'player', '', @details, @appearance,
+          @wearing, @equipped, @inventory, @skills, @spells, NULL, @createdAt, @updatedAt
+        )
+      `).run({
+        id: crypto.randomUUID(), chatId, name,
+        details: playerCharacter.details?.trim() || "",
+        appearance: playerCharacter.appearance?.trim() || "",
+        wearing: playerCharacter.wearing?.trim() || "",
+        equipped: playerCharacter.equipped?.trim() || "",
+        inventory: playerCharacter.inventory?.trim() || "",
+        skills: playerCharacter.skills?.trim() || "",
+        spells: playerCharacter.spells?.trim() || "",
+        createdAt: now, updatedAt: now,
+      });
+    }
   });
+  create();
 
   const chat = getChat(chatId);
   if (!chat) {
@@ -627,7 +678,7 @@ export function listCharacters(chatId: string): StoryCharacter[] {
   const rows = getDatabase()
     .prepare(
       `
-        SELECT id, chat_id, name, control_type, player_name, details, inventory, skills, spells, portrait_json, created_at, updated_at
+        SELECT id, chat_id, name, control_type, player_name, details, appearance, wearing, equipped, inventory, skills, spells, portrait_json, created_at, updated_at
         FROM characters
         WHERE chat_id = ?
         ORDER BY updated_at DESC, created_at DESC
@@ -647,7 +698,7 @@ export function getCharactersByIds(chatId: string, characterIds: string[]) {
   const rows = getDatabase()
     .prepare(
       `
-        SELECT id, chat_id, name, control_type, player_name, details, inventory, skills, spells, portrait_json, created_at, updated_at
+        SELECT id, chat_id, name, control_type, player_name, details, appearance, wearing, equipped, inventory, skills, spells, portrait_json, created_at, updated_at
         FROM characters
         WHERE chat_id = ? AND id IN (${placeholders})
       `,
@@ -668,6 +719,9 @@ export function createCharacter(
     controlType?: "npc" | "player";
     playerName?: string;
     details?: string;
+    appearance?: string;
+    wearing?: string;
+    equipped?: string;
     inventory?: string;
     skills?: string;
     spells?: string;
@@ -693,6 +747,9 @@ export function createCharacter(
           control_type,
           player_name,
           details,
+          appearance,
+          wearing,
+          equipped,
           inventory,
           skills,
           spells,
@@ -707,6 +764,9 @@ export function createCharacter(
           @controlType,
           @playerName,
           @details,
+          @appearance,
+          @wearing,
+          @equipped,
           @inventory,
           @skills,
           @spells,
@@ -722,6 +782,9 @@ export function createCharacter(
       controlType: input.controlType || "npc",
       playerName: input.playerName?.trim() || "",
       details: input.details?.trim() || "",
+      appearance: input.appearance?.trim() || "",
+      wearing: input.wearing?.trim() || "",
+      equipped: input.equipped?.trim() || "",
       inventory: input.inventory?.trim() || "",
       skills: input.skills?.trim() || "",
       spells: input.spells?.trim() || "",
@@ -745,6 +808,9 @@ export function updateCharacter(
     controlType?: "npc" | "player";
     playerName?: string;
     details?: string;
+    appearance?: string;
+    wearing?: string;
+    equipped?: string;
     inventory?: string;
     skills?: string;
     spells?: string;
@@ -762,6 +828,9 @@ export function updateCharacter(
   }
 
   const nextDetails = updates.details !== undefined ? updates.details.trim() : existing.details;
+  const nextAppearance = updates.appearance !== undefined ? updates.appearance.trim() : existing.appearance;
+  const nextWearing = updates.wearing !== undefined ? updates.wearing.trim() : existing.wearing;
+  const nextEquipped = updates.equipped !== undefined ? updates.equipped.trim() : existing.equipped;
   const nextInventory =
     updates.inventory !== undefined ? updates.inventory.trim() : existing.inventory;
   const nextSkills = updates.skills !== undefined ? updates.skills.trim() : existing.skills;
@@ -781,6 +850,9 @@ export function updateCharacter(
             control_type = @controlType,
             player_name = @playerName,
             details = @details,
+            appearance = @appearance,
+            wearing = @wearing,
+            equipped = @equipped,
             inventory = @inventory,
             skills = @skills,
             spells = @spells,
@@ -796,6 +868,9 @@ export function updateCharacter(
         controlType: updates.controlType ?? existing.controlType,
         playerName: updates.playerName !== undefined ? updates.playerName.trim() : existing.playerName,
         details: nextDetails,
+        appearance: nextAppearance,
+        wearing: nextWearing,
+        equipped: nextEquipped,
         inventory: nextInventory,
         skills: nextSkills,
         spells: nextSpells,

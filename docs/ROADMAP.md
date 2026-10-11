@@ -2,9 +2,9 @@
 
 Product intent is in [PRODUCT-VISION.md](PRODUCT-VISION.md); completed work and verification limits are in [PROJECT-STATUS.md](../PROJECT-STATUS.md). Items below are not implemented unless status explicitly says otherwise.
 
-## Implemented locally: first multi-participant story input
+## Implemented locally: Player Character canonical state
 
-Use the existing `StoryCharacter` as the actor. Characters are NPCs or human-controlled Player Characters, with an optional real-player display name. There is no separate participant/account model, Discord integration or network multiplayer.
+Use the existing `StoryCharacter` as the actor and state record. New stories save a Player Character before opening narration; existing stories add one in place. Characters are NPCs or human-controlled Player Characters, with an optional real-player display name. There is no separate participant/account model, Discord integration or network multiplayer.
 
 Acceptance requirements:
 
@@ -14,6 +14,7 @@ Acceptance requirements:
 - Distinguish simultaneous participants' intentions, such as Kael checking a door while Brom watches the corridor.
 - Preserve existing messages without assigning invented authorship; keep old stories and the single-player path compatible and frictionless.
 - Verify persistence across reload/resume, actor selection, narrator payload identity and legacy-story behaviour before adding transport.
+- Show and persist Appearance, Wearing, Equipped, Inventory, Skills and Spells. Supply them as narrator context and prohibit inventing unestablished Player Character state. Automatic event-to-state reconciliation remains later work.
 - Replace Story composer mode with Random Event, requesting a plausible surprise without forcing player actions or combat. Preserve Attach.
 
 Implementation and isolated regression coverage are described in [Player Characters](player-characters.md). Further work should strengthen continuity before adding transport.

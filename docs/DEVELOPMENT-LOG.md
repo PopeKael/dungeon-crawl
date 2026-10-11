@@ -1,5 +1,11 @@
 # Development log
 
+## 11 October 2026 — Player Character canonical state
+
+New-story setup now requires a named Player Character and creates it in the same SQLite transaction as the story, before either narrator opening path can run. The existing Character record gained Appearance, Wearing and Equipped through additive SQLite columns; the six canonical fields now appear in the Characters editor, with Player Characters listed first and clearly labelled. Existing stories can add a Player Character in place. Legacy character details, portraits, messages, attribution and summaries remain untouched, and old state columns default empty. The narrator receives all six fields and is instructed not to invent unestablished Player Character possessions, clothing, equipment, skills or spells; existing NPC prompt rules remain in place. Automatic state reconciliation is not part of this checkpoint.
+
+Expanded `npm run check:player-characters` to cover required new-story setup, in-place addition after migration, preservation of an existing summary, saved/reloaded state, all six narrator fields and the legacy no-Player-Character prompt path. The isolated regression, Ollama 64K context regression, ESLint and Next.js production build passed; `git diff --check` passed. No live inference or saved production story was used.
+
 ## 11 October 2026 — Networking documentation and source checkpoint
 
 Added `NETWORKING-AND-HTTPS.md` for public-repository users: localhost HTTP without a NAS, configurable HTTPS edges, five deployment modes, streaming/forwarded-header contracts, private-data boundaries and future service supervision. README links the guide; the Speechify/Synology record is explicitly site-specific. Corrected wording that implied HTTPS was mandatory for local play, scoped the current Windows launcher's HTTPS gateway requirement, and labelled superseded forwarding commands as historical. AGENTS.md requires inspecting the complete route and preserving localhost-safe defaults without inventing global forwarding/firewall changes to pass tests. Documentation work changed no application behaviour or network configuration.

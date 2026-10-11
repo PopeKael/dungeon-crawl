@@ -27,6 +27,16 @@ const settingsSchema = z.object({
 const createChatSchema = z.object({
   title: z.string().trim().min(1).optional(),
   settings: settingsSchema.optional(),
+  playerCharacter: z.object({
+    name: z.string().trim().min(1),
+    details: z.string().optional(),
+    appearance: z.string().optional(),
+    wearing: z.string().optional(),
+    equipped: z.string().optional(),
+    inventory: z.string().optional(),
+    skills: z.string().optional(),
+    spells: z.string().optional(),
+  }),
 });
 
 export async function GET() {
@@ -36,7 +46,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const raw = await request.json().catch(() => ({}));
   const body = createChatSchema.parse(raw);
-  const chat = createChat(body.settings, body.title);
+  const chat = createChat(body.settings, body.title, body.playerCharacter);
 
   return Response.json({ chat }, { status: 201 });
 }

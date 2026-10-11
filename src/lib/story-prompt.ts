@@ -20,7 +20,9 @@ This is private adult fiction. Consensual NSFW content is allowed and should be 
 
 You may receive saved character portrait images in a separate context message. Use those portraits to maintain visual continuity for character appearance, and match names to exact IDs from the labels.
 
-Respect the saved character inventory, skills, and spells as established story state. Do not add, remove, spend, or change those tracked items unless the visible story events clearly justify it.`;
+Respect saved character inventory, skills, and spells as established story state. Do not add, remove, spend, or change those tracked items unless the visible story events clearly justify it.`;
+
+const PLAYER_STATE_SYSTEM = `For Player Characters only, use saved Appearance, Wearing, Equipped, Inventory, Skills, and Spells as canonical state. Do not invent possessions, clothing, equipment, skills, or spells that are not established in those fields or prior visible story events. Do not add, remove, spend, or change established state unless visible story events clearly justify it. NPC behaviour remains governed by their established descriptions and the story.`;
 
 const IMAGE_SYSTEM = `You have access to a function tool named generate_image. Write the story passage as normal assistant text. If, and only if, a visual beat is truly useful, call generate_image once after writing the passage.
 
@@ -95,9 +97,24 @@ export function buildStoryMessages(
             `Name: ${character.name}`,
             character.controlType === "player" ? "Human-controlled player character: leave their choices to the player." : "",
             character.details ? `Details: ${character.details}` : "",
-            character.inventory ? `Inventory:\n${character.inventory}` : "",
-            character.skills ? `Skills:\n${character.skills}` : "",
-            character.spells ? `Spells:\n${character.spells}` : "",
+            character.controlType === "player"
+              ? `Appearance:\n${character.appearance || "Not established."}`
+              : character.appearance ? `Appearance:\n${character.appearance}` : "",
+            character.controlType === "player"
+              ? `Wearing:\n${character.wearing || "Not established."}`
+              : character.wearing ? `Wearing:\n${character.wearing}` : "",
+            character.controlType === "player"
+              ? `Equipped:\n${character.equipped || "Not established."}`
+              : character.equipped ? `Equipped:\n${character.equipped}` : "",
+            character.controlType === "player"
+              ? `Inventory:\n${character.inventory || "Not established."}`
+              : character.inventory ? `Inventory:\n${character.inventory}` : "",
+            character.controlType === "player"
+              ? `Skills:\n${character.skills || "Not established."}`
+              : character.skills ? `Skills:\n${character.skills}` : "",
+            character.controlType === "player"
+              ? `Spells:\n${character.spells || "Not established."}`
+              : character.spells ? `Spells:\n${character.spells}` : "",
             character.portrait ? "Portrait reference: available" : "Portrait reference: unavailable",
           ]
             .filter(Boolean)
@@ -114,6 +131,7 @@ export function buildStoryMessages(
         characters.some((character) => character.controlType === "player")
           ? "Actions labelled with an acting character belong only to that character, not the whole party. Keep distinct player characters separate. Do not invent decisions or dialogue for human-controlled characters. Use character names rather than real player names."
           : "",
+        characters.some((character) => character.controlType === "player") ? PLAYER_STATE_SYSTEM : "",
         settings.imageGenerationEnabled ? IMAGE_SYSTEM : IMAGE_DISABLED_SYSTEM,
         `World / scenario:\n${settings.world || "A grounded modern roleplay scene with room to improvise."}`,
         `Tone / prose style:\n${settings.style || "Clean, dark text-adventure prose, intimate but not flowery."}`,

@@ -13,10 +13,10 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dungeon-actors-'));
 process.env.SQLITE_DB_PATH = path.join(directory, 'legacy.sqlite');
 const legacy = new Database(process.env.SQLITE_DB_PATH);
 legacy.exec(`
- CREATE TABLE chats(id TEXT PRIMARY KEY,title TEXT NOT NULL,settings_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+ CREATE TABLE chats(id TEXT PRIMARY KEY,title TEXT NOT NULL,settings_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,story_summary TEXT NOT NULL DEFAULT '',story_summary_count INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE messages(id TEXT PRIMARY KEY,chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,role TEXT NOT NULL,content TEXT NOT NULL,attachments_json TEXT NOT NULL DEFAULT '[]',image_request_json TEXT,generated_image_json TEXT,created_at TEXT NOT NULL);
  CREATE TABLE characters(id TEXT PRIMARY KEY,chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,name TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',inventory TEXT NOT NULL DEFAULT '',skills TEXT NOT NULL DEFAULT '',spells TEXT NOT NULL DEFAULT '',portrait_json TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
- INSERT INTO chats VALUES ('legacy','Legacy','{}','2026-01-01','2026-01-01');
+ INSERT INTO chats VALUES ('legacy','Legacy','{}','2026-01-01','2026-01-01','Keep this summary',1);
  INSERT INTO messages VALUES ('old-message','legacy','user','> Check the door','[]',NULL,NULL,'2026-01-01');
  INSERT INTO characters VALUES ('old-npc','legacy','Mira','Guide','Lantern','Navigation','',NULL,'2026-01-01','2026-01-01');
 `);
@@ -48,21 +48,53 @@ try {
   const actors=load('src/lib/player-actors.ts');
   const prompt=load('src/lib/story-prompt.ts');
   const route=load('src/app/api/story/route.ts');
+const chatsRoute=load('src/app/api/chats/route.ts');
   let chat=db.getChat('legacy');
   assert.equal(chat.messages[0].content,'> Check the door');
   assert.equal(chat.messages[0].actorCharacterId,undefined);
   assert.equal(chat.characters[0].controlType,'npc');
   assert.equal(chat.characters[0].playerName,'');
   assert.equal(chat.characters[0].inventory,'Lantern');
+  assert.equal(chat.characters[0].appearance,'');
+  assert.equal(chat.characters[0].wearing,'');
+  assert.equal(chat.characters[0].equipped,'');
+  assert.deepEqual(db.getStorySummary('legacy'),{summary:'Keep this summary',coveredCount:1},'Existing summary survives additive migration');
   assert.equal(actors.selectedPlayerActor(chat.characters,''),undefined);
   assert.equal(prompt.buildStoryMessages(chat.messages,'> Enter',chat.settings,chat.characters)[1].content,'> Check the door');
+  const legacyPrompt=prompt.buildStoryMessages(chat.messages,'> Enter',chat.settings,chat.characters)[0].content;
+  assert.doesNotMatch(legacyPrompt,/For Player Characters only/,'Legacy NPC-only narration receives no new player-state directive');
   assert.equal(actors.formatPlayerInput('say','Hello'),'> You say "Hello"');
 
-  const kael=db.createCharacter(chat.id,{name:'Kael',controlType:'player',playerName:'Wazza',inventory:'Lockpicks',skills:'Traps'});
+  const legacyCounts={messages:chat.messages.length, characters:chat.characters.length, preview:chat.lastMessagePreview};
+  const added=db.createCharacter(chat.id,{name:'Iris',controlType:'player',appearance:'Silver braid',wearing:'Green coat',equipped:'Walking staff',inventory:'Brass key',skills:'Cartography',spells:'None'});
+  chat=db.getChat('legacy');
+  assert.equal(chat.messages.length,legacyCounts.messages,'Adding a Player Character leaves story messages intact');
+  assert.equal(chat.characters.find(c=>c.id==='old-npc').name,'Mira','Existing NPC remains intact');
+  assert.equal(chat.characters.find(c=>c.id==='old-npc').details,'Guide','Existing character details remain intact');
+  assert.deepEqual(db.getStorySummary('legacy'),{summary:'Keep this summary',coveredCount:1},'Adding a Player Character preserves the existing summary');
+  assert.equal(added.appearance,'Silver braid');
+  db.updateCharacter(chat.id,added.id,{appearance:'Silver braid',wearing:'Green coat',equipped:'Walking staff',inventory:'Brass key',skills:'Cartography',spells:'None'});
+
+  const newStoryResponse=await chatsRoute.POST(new Request('http://localhost/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'New story',settings:{},playerCharacter:{name:'Tamsin',appearance:'Freckled',wearing:'Travel cloak',equipped:'Bow',inventory:'Rations',skills:'Tracking',spells:'None'}})}));
+  assert.equal(newStoryResponse.status,201);
+  const newStory=(await newStoryResponse.json()).chat;
+  assert.equal(newStory.messages.length,0,'New story has no narration before the Player Character is stored');
+  assert.equal(newStory.characters.length,1);
+  assert.equal(newStory.characters[0].controlType,'player');
+  assert.equal(newStory.characters[0].name,'Tamsin');
+  assert.equal(newStory.characters[0].equipped,'Bow');
+  const newPlayerPrompt=prompt.buildStoryMessages([], 'Begin',newStory.settings,newStory.characters)[0].content;
+  for(const state of ['Appearance:\nFreckled','Wearing:\nTravel cloak','Equipped:\nBow','Inventory:\nRations','Skills:\nTracking','Spells:\nNone']) assert.ok(newPlayerPrompt.includes(state),`New Player Character narrator context includes ${state}`);
+  await assert.rejects(()=>chatsRoute.POST(new Request('http://localhost/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Missing player',settings:{}})})),/playerCharacter/);
+  db.updateCharacter(chat.id,added.id,{controlType:'npc'});
+
+  const kael=db.createCharacter(chat.id,{name:'Kael',controlType:'player',playerName:'Wazza',appearance:'Tall, dark curls',wearing:'Blue coat',equipped:'Rapier',inventory:'Lockpicks',skills:'Traps',spells:'Light'});
   const one=db.listCharacters(chat.id);
   assert.equal(actors.selectedPlayerActor(one,'')?.id,kael.id,'Single player automatically selected');
   assert.equal(actors.selectedPlayerActor(one,'old-npc')?.id,kael.id,'NPC cannot become actor');
   const brom=db.createCharacter(chat.id,{name:'Brom',controlType:'player',playerName:'Jack'});
+  const blankPlayerPrompt=prompt.buildStoryMessages([], 'Wait',chat.settings,db.listCharacters(chat.id))[0].content;
+  assert.match(blankPlayerPrompt,/Appearance:\nNot established\./,'Blank Player Character state is explicit to the narrator');
   const several=db.listCharacters(chat.id);
   assert.deepEqual(new Set(actors.playerCharacters(several).map(c=>c.name)),new Set(['Kael','Brom']));
   assert.equal(actors.selectedPlayerActor(several,''),undefined,'Multiple players need an explicit choice');
@@ -82,6 +114,8 @@ try {
   assert.equal((await turn({userMessageId:'kael-turn',actorCharacterId:kael.id})).status,200);
   let sent=requests.at(-1).messages;
   assert.match(sent.at(-1).content,/Acting player character: Kael/);
+  for(const state of ['Tall, dark curls','Blue coat','Rapier','Lockpicks','Traps','Light']) assert.ok(sent[0].content.includes(state),`Narrator context includes ${state}`);
+  assert.match(sent[0].content,/Do not invent possessions, clothing, equipment, skills, or spells/);
   assert.ok(!JSON.stringify(sent).includes('Wazza'),'Real display name stays out of narration');
   const saved=db.getChat(chat.id).messages.find(m=>m.id==='kael-turn');
   assert.equal(saved.actorCharacterId,kael.id); assert.equal(saved.actorCharacterName,'Kael');
@@ -113,6 +147,7 @@ try {
   assert.equal(prompt.buildStoryMessages([event],'Next',settings,several)[1].content,actors.RANDOM_EVENT_DIRECTIVE);
 
   const history=[{...saved,content:'Long passage '.repeat(20000)},{...saved,id:'brom-history',actorCharacterId:brom.id,actorCharacterName:'Brom',content:'I watch the corridor'},{...saved,id:'recent',content:'Wait here'}];
+  db.setStorySummary(chat.id,'',0);
   const before=requests.length;
   await turn({messages:history});
   assert.equal(requests.length,before+2,'Evicted history triggers summary then narration');
@@ -123,8 +158,14 @@ try {
   chat=db.getChat('legacy');
   assert.equal(chat.messages.find(m=>m.id==='kael-turn').actorCharacterId,kael.id,'Identity survives DB reopen');
   assert.equal(chat.characters.find(c=>c.id===brom.id).playerName,'Jack');
+  const reloadedIris=chat.characters.find(c=>c.id===added.id);
+  assert.equal(reloadedIris.appearance,'Silver braid','Edited Appearance survives reload');
+  assert.equal(reloadedIris.wearing,'Green coat','Edited Wearing survives reload');
+  assert.equal(reloadedIris.equipped,'Walking staff','Edited Equipped survives reload');
+  const reloadedStory=db.getChat(newStory.id);
+  assert.equal(reloadedStory.characters[0].inventory,'Rations','New Player Character state survives reload');
   assert.equal(chat.messages.find(m=>m.id==='old-message').actorCharacterId,undefined);
-  console.log('Passed: legacy migration/input, single-player auto-selection, multiple actors, NPC/cross-story rejection, persisted attribution, rename/delete/retry, random-event streaming/retry, compaction identity and database reopen. No live inference or story writes.');
+  console.log('Passed: required new-story Player Character, in-place legacy addition and summary preservation, six-field save/reload and narrator context, legacy NPC behaviour, actor selection/attribution, NPC/cross-story rejection, rename/delete/retry, Random Event, compaction identity and database reopen. No live inference or story writes.');
 } finally {
   globalThis.fetch=originalFetch;
   globalThis.__localRoleplayDb?.close(); globalThis.__localRoleplayDb=undefined;

@@ -155,6 +155,9 @@ type CharacterDraft = {
   controlType: "npc" | "player";
   playerName: string;
   details: string;
+  appearance: string;
+  wearing: string;
+  equipped: string;
   inventory: string;
   skills: string;
   spells: string;
@@ -206,6 +209,9 @@ function emptyCharacterDraft(): CharacterDraft {
     controlType: "npc",
     playerName: "",
     details: "",
+    appearance: "",
+    wearing: "",
+    equipped: "",
     inventory: "",
     skills: "",
     spells: "",
@@ -855,6 +861,9 @@ export default function Home() {
           controlType: characterDraft.controlType,
           playerName: characterDraft.playerName,
           details: characterDraft.details,
+          appearance: characterDraft.appearance,
+          wearing: characterDraft.wearing,
+          equipped: characterDraft.equipped,
           inventory: characterDraft.inventory,
           skills: characterDraft.skills,
           spells: characterDraft.spells,
@@ -882,6 +891,9 @@ export default function Home() {
       controlType?: "npc" | "player";
       playerName?: string;
       details?: string;
+      appearance?: string;
+      wearing?: string;
+      equipped?: string;
       inventory?: string;
       skills?: string;
       spells?: string;
@@ -1345,6 +1357,7 @@ export default function Home() {
   async function beginStory(options: {
     title: string;
     world: string;
+    playerCharacter: Pick<StoryCharacter, "name" | "details" | "appearance" | "wearing" | "equipped" | "inventory" | "skills" | "spells">;
     opening: { mode: "narrator"; hint: string } | { mode: "self"; text: string };
   }) {
     setNewStoryOpen(false);
@@ -1355,7 +1368,7 @@ export default function Home() {
       const response = await fetch("/api/chats", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: seedSettings, title: options.title }),
+        body: JSON.stringify({ settings: seedSettings, title: options.title, playerCharacter: options.playerCharacter }),
       });
       const payload = await readApi<ChatResponse>(response);
       setChats((current) => [
@@ -1483,6 +1496,9 @@ export default function Home() {
               controlType: character.controlType,
               playerName: character.playerName,
               details: character.details,
+              appearance: character.appearance,
+              wearing: character.wearing,
+              equipped: character.equipped,
               inventory: character.inventory,
               skills: character.skills,
               spells: character.spells,
@@ -1645,6 +1661,9 @@ export default function Home() {
               controlType: character.controlType,
               playerName: character.playerName,
               details: character.details,
+              appearance: character.appearance,
+              wearing: character.wearing,
+              equipped: character.equipped,
               inventory: character.inventory,
               skills: character.skills,
               spells: character.spells,
@@ -2061,12 +2080,19 @@ function NewStorySetup({
   onBegin: (options: {
     title: string;
     world: string;
+    playerCharacter: Pick<StoryCharacter, "name" | "details" | "appearance" | "wearing" | "equipped" | "inventory" | "skills" | "spells">;
     opening: { mode: "narrator"; hint: string } | { mode: "self"; text: string };
   }) => void;
 }) {
   const [presetId, setPresetId] = useState<StoryPresetId>("fantasy");
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
+  const [appearance, setAppearance] = useState("");
+  const [wearing, setWearing] = useState("");
+  const [equipped, setEquipped] = useState("");
+  const [inventory, setInventory] = useState("");
+  const [skills, setSkills] = useState("");
+  const [spells, setSpells] = useState("");
   const [customWorld, setCustomWorld] = useState("");
   const [openingMode, setOpeningMode] = useState<"narrator" | "self">("narrator");
   const [openingHint, setOpeningHint] = useState("");
@@ -2076,27 +2102,37 @@ function NewStorySetup({
   const preset = STORY_PRESETS.find((item) => item.id === presetId) ?? STORY_PRESETS[0];
   const settingReady = !isCustom || customWorld.trim().length > 0;
   const openingReady = openingMode === "narrator" || openingText.trim().length > 0;
-  const canBegin = settingReady && openingReady;
+  const canBegin = settingReady && openingReady && name.trim().length > 0;
 
   function begin() {
     const opening =
       openingMode === "self"
         ? ({ mode: "self", text: openingText.trim() } as const)
         : ({ mode: "narrator", hint: openingHint.trim() } as const);
+    const playerCharacter = {
+      name: name.trim(),
+      details: role.trim() || (!isCustom ? preset.rolePlaceholder : ""),
+      appearance: appearance.trim(),
+      wearing: wearing.trim(),
+      equipped: equipped.trim(),
+      inventory: inventory.trim(),
+      skills: skills.trim(),
+      spells: spells.trim(),
+    };
 
     if (isCustom) {
       const world = customWorld.trim();
-      onBegin({ world, title: titleFromInput(world), opening });
+      onBegin({ world, title: titleFromInput(world), playerCharacter, opening });
       return;
     }
 
     const persona = role.trim() || preset.rolePlaceholder;
-    const protagonist = name.trim() ? `${name.trim()}, ${persona}` : persona;
     onBegin({
-      world: `${preset.seed} You are ${protagonist}.`,
+      world: `${preset.seed} The Player Character is ${name.trim()}${persona ? `, ${persona}` : ""}.`,
       title: titleFromInput(
-        name.trim() ? `${name.trim()} · ${preset.label}` : `${preset.label} · ${persona}`,
+        `${name.trim()} · ${preset.label}`,
       ),
+      playerCharacter,
       opening,
     });
   }
@@ -2148,7 +2184,7 @@ function NewStorySetup({
             })}
           </div>
 
-          {isCustom ? (
+          {isCustom && (
             <label className="mt-4 block">
               <span className="mb-2 block text-xs font-medium uppercase text-stone-500">
                 What is this story about?
@@ -2163,36 +2199,35 @@ function NewStorySetup({
                 className="w-full resize-none rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300"
               />
             </label>
-          ) : (
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-2 block text-xs font-medium uppercase text-stone-500">
-                  Who are you?
-                </span>
-                <input
-                  id="new-story-role"
-                  name="new-story-role"
-                  value={role}
-                  onChange={(event) => setRole(event.target.value)}
-                  placeholder={preset.rolePlaceholder}
-                  className="w-full rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-2 block text-xs font-medium uppercase text-stone-500">
-                  Name <span className="normal-case text-stone-600">(optional)</span>
-                </span>
-                <input
-                  id="new-story-name"
-                  name="new-story-name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Alice Fordring"
-                  className="w-full rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300"
-                />
-              </label>
-            </div>
           )}
+
+          <section className="mt-5 rounded-lg border border-amber-900/50 bg-stone-950/60 p-4" aria-label="Player Character definition">
+            <h3 className="font-serif text-lg text-amber-100">Player Character</h3>
+            <p className="mt-1 text-xs text-stone-400">Define who you play before the story opens. The narrator uses these saved fields as canon.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium uppercase text-stone-500">Character name <span className="text-amber-300">required</span></span>
+                <input id="new-story-name" name="new-story-name" required value={name} onChange={(event) => setName(event.target.value)} placeholder="Alice Fordring" className="w-full rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300" />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium uppercase text-stone-500">Character concept</span>
+                <input id="new-story-role" name="new-story-role" value={role} onChange={(event) => setRole(event.target.value)} placeholder={isCustom ? "A practical lighthouse keeper" : preset.rolePlaceholder} className="w-full rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300" />
+              </label>
+              {[
+                ["Appearance", appearance, setAppearance, "Build, hair, face, distinguishing features..."],
+                ["Wearing", wearing, setWearing, "Clothing currently worn..."],
+                ["Equipped", equipped, setEquipped, "Weapons, armour, tools currently equipped..."],
+                ["Inventory", inventory, setInventory, "Other carried items, money, quest objects..."],
+                ["Skills", skills, setSkills, "Established talents and proficiencies..."],
+                ["Spells", spells, setSpells, "Known or prepared spells and powers..."],
+              ].map(([label, value, setter, placeholder]) => (
+                <label className="block" key={label as string}>
+                  <span className="mb-1 block text-xs font-medium uppercase text-stone-500">{label as string}</span>
+                  <textarea value={value as string} onChange={(event) => (setter as (value: string) => void)(event.target.value)} rows={2} placeholder={placeholder as string} className="w-full resize-y rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300" />
+                </label>
+              ))}
+            </div>
+          </section>
 
           <div className="mt-5 border-t border-stone-800 pt-4">
             <span className="mb-2 block text-xs font-medium uppercase text-stone-500">
@@ -2327,7 +2362,7 @@ function MobileToolsSheet({
   onCreateCharacter: () => void;
   onLocalCharacterChange: (
     characterId: string,
-    updates: Partial<Pick<StoryCharacter, "name" | "controlType" | "playerName" | "details" | "inventory" | "skills" | "spells">>,
+    updates: Partial<Pick<StoryCharacter, "name" | "controlType" | "playerName" | "details" | "appearance" | "wearing" | "equipped" | "inventory" | "skills" | "spells">>,
   ) => void;
   onSaveCharacter: (character: StoryCharacter) => void;
   onPortraitFile: (characterId: string, file: File) => void;
@@ -2638,7 +2673,7 @@ function CharacterPanel({
   onCreate: () => void;
   onLocalChange: (
     characterId: string,
-    updates: Partial<Pick<StoryCharacter, "name" | "controlType" | "playerName" | "details" | "inventory" | "skills" | "spells">>,
+    updates: Partial<Pick<StoryCharacter, "name" | "controlType" | "playerName" | "details" | "appearance" | "wearing" | "equipped" | "inventory" | "skills" | "spells">>,
   ) => void;
   onSave: (character: StoryCharacter) => void;
   onPortraitFile: (characterId: string, file: File) => void;
@@ -2650,6 +2685,9 @@ function CharacterPanel({
   // full roster doesn't crowd the panel (#8).
   const [createOpen, setCreateOpen] = useState(false);
   const [expandedId, setExpandedId] = useState("");
+  const orderedCharacters = [...characters].sort(
+    (left, right) => Number(right.controlType === "player") - Number(left.controlType === "player"),
+  );
 
   return (
     <PanelSection
@@ -2665,11 +2703,14 @@ function CharacterPanel({
       <button
         type="button"
         aria-expanded={createOpen}
-        onClick={() => setCreateOpen((current) => !current)}
+        onClick={() => {
+          onDraftChange((current) => ({ ...current, controlType: "player" }));
+          setCreateOpen((current) => !current);
+        }}
         className="flex w-full items-center gap-2 rounded border border-dashed border-stone-700 px-3 py-2 text-sm text-stone-400 hover:border-amber-800/60 hover:bg-stone-900 hover:text-stone-200"
       >
         <Plus className="size-4" aria-hidden="true" />
-        New character
+        Add Player Character
         <ChevronRight
           className={cn("ml-auto size-4 transition", createOpen && "rotate-90")}
           aria-hidden="true"
@@ -2721,6 +2762,17 @@ function CharacterPanel({
             placeholder="Short black hair, tomboy, dry humor..."
           />
         </label>
+
+        {([
+          ["Appearance", "appearance", "Physical features and distinguishing marks..."],
+          ["Wearing", "wearing", "Clothing currently worn..."],
+          ["Equipped", "equipped", "Weapons, armour, and tools currently equipped..."],
+        ] as const).map(([label, field, placeholder]) => (
+          <label className="block" key={field}>
+            <span className="mb-1 block text-xs font-medium uppercase text-stone-500">{label}</span>
+            <textarea value={draft[field]} onChange={(event) => onDraftChange((current) => ({ ...current, [field]: event.target.value }))} rows={2} className="w-full resize-none rounded border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-300" placeholder={placeholder} />
+          </label>
+        ))}
 
         <div className="grid gap-2">
           <label className="block">
@@ -2841,7 +2893,7 @@ function CharacterPanel({
       )}
 
       <div className="space-y-2">
-        {characters.map((character) => {
+        {orderedCharacters.map((character) => {
           const pictureInputId = `character-picture-${character.id}`;
           const expanded = expandedId === character.id;
 
@@ -2869,7 +2921,7 @@ function CharacterPanel({
                   <span className="block truncate text-sm font-medium text-stone-200">
                     {character.name || "Unnamed character"}
                   </span>
-                  <span className="block text-xs text-stone-500">{character.controlType === "player" ? "Player Character" : "NPC"}</span>
+                  <span className={cn("block text-xs font-medium", character.controlType === "player" ? "text-amber-200" : "text-stone-500")}>{character.controlType === "player" ? "Player Character" : "NPC"}</span>
                   {character.details && (
                     <span className="block truncate text-xs text-stone-500">
                       {character.details}
@@ -2927,14 +2979,13 @@ function CharacterPanel({
                     className="w-full rounded border border-stone-800 bg-stone-950 px-2 py-1.5 text-sm font-medium text-stone-200 outline-none focus:border-amber-300"
                   />
                   <textarea
+                    aria-label={`Details for ${character.name}`}
                     value={character.details}
-                    onChange={(event) =>
-                      onLocalChange(character.id, { details: event.target.value })
-                    }
+                    onChange={(event) => onLocalChange(character.id, { details: event.target.value })}
                     onBlur={() => onSave(character)}
-                    rows={3}
+                    rows={2}
                     className="w-full resize-none rounded border border-stone-800 bg-stone-950 px-2 py-1.5 text-xs text-stone-300 outline-none focus:border-amber-300"
-                    placeholder="Details the narrator should preserve..."
+                    placeholder="Character concept and personality..."
                   />
                 </div>
 
@@ -2960,6 +3011,16 @@ function CharacterPanel({
               </div>
 
               <div className="grid gap-2">
+                {([
+                  ["Appearance", "appearance", "Physical features and distinguishing marks..."],
+                  ["Wearing", "wearing", "Clothing currently worn..."],
+                  ["Equipped", "equipped", "Weapons, armour, and tools currently equipped..."],
+                ] as const).map(([label, field, placeholder]) => (
+                  <label className="block" key={field}>
+                    <span className="mb-1 block text-xs font-medium uppercase text-stone-500">{label}</span>
+                    <textarea value={character[field]} onChange={(event) => onLocalChange(character.id, { [field]: event.target.value })} onBlur={() => onSave(character)} rows={2} className="w-full resize-none rounded border border-stone-800 bg-stone-950 px-2 py-1.5 text-xs text-stone-300 outline-none focus:border-amber-300" placeholder={placeholder} />
+                  </label>
+                ))}
                 <label className="block">
                   <span className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase text-stone-500">
                     <Backpack className="size-3.5" aria-hidden="true" />
