@@ -25,6 +25,7 @@ if (-not $mutex.WaitOne(0)) {
 $script:worker = $null
 $script:operation = ''
 $script:running = $false
+$script:componentsReady = $false
 $script:exitRequested = $false
 $script:lastMessage = 'Not started.'
 $logDirectory = Join-Path $taskRoot 'logs'
@@ -81,19 +82,21 @@ function Exit-Dungeon {
 function Invoke-DungeonOperation([string]$action) {
     if ($script:worker) { return }
     $script:operation = $action
-    $tray.Text = ('Dungeon Crawl - ' + $action + ' in progress')
+    if ($action -ne 'Status') { $tray.Text = ('Dungeon Crawl - ' + $action + ' in progress') }
     $tray.BalloonTipTitle = 'Dungeon Crawl'
     $tray.BalloonTipText = $(if ($action -eq 'Start' -or $action -eq 'Restart') { 'Checking GPU activity, VRAM and RAM, then preparing the 64K model and web app...' } else { $action + ' in progress...' })
     if ($action -ne 'Status') { $tray.ShowBalloonTip(4000) }
     $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Action {1}' -f (Join-Path $PSScriptRoot 'dungeon-worker.ps1'), $action
     $script:worker = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe') -ArgumentList $arguments -WorkingDirectory $taskRoot -WindowStyle Hidden -RedirectStandardOutput $resultPath -RedirectStandardError $errorPath -PassThru
-    foreach ($item in $menu.Items) { $item.Enabled = $false }
-    foreach ($item in $control.Controls) { if ($item -is [Windows.Forms.Button]) { $item.Enabled = $false } }
-    $details.Text = $action + ' in progress...'
+    if ($action -ne 'Status') {
+        foreach ($item in $menu.Items) { $item.Enabled = $false }
+        foreach ($item in $control.Controls) { if ($item -is [Windows.Forms.Button]) { $item.Enabled = $false } }
+        $details.Text = $action + ' in progress...'
+    }
 }
 
 $open = $menu.Items.Add('Open game')
-$open.add_Click({ Start-Process $config.appUrl })
+$open.add_Click({ Invoke-DungeonOperation 'Start' })
 $start = $menu.Items.Add('Start')
 $start.add_Click({ Invoke-DungeonOperation 'Start' })
 $restart = $menu.Items.Add('Restart')
@@ -110,7 +113,7 @@ $logs.add_Click({ Start-Process explorer.exe -ArgumentList ('"{0}"' -f $logDirec
 $null = $menu.Items.Add([Windows.Forms.ToolStripSeparator]::new())
 $quit = $menu.Items.Add('Exit')
 $quit.add_Click({ Exit-Dungeon })
-$tray.add_DoubleClick({ if ($script:running) { Start-Process $config.appUrl } else { Invoke-DungeonOperation 'Start' } })
+$tray.add_DoubleClick({ Invoke-DungeonOperation 'Start' })
 $timer = [Windows.Forms.Timer]::new()
 $timer.Interval = 500
 $script:ticks = 0
@@ -132,6 +135,17 @@ $timer.add_Tick({
                 # Keep the tray available when stopping fails so the user can retry.
             }
             if ($result) {
+                $statusChanged = $false
+                if ($completed -eq 'Status') {
+                    $readyNow = [bool]$result.ComponentsReady
+                    if (($script:componentsReady -ne $readyNow) -or ($script:running -ne [bool]$result.Running)) {
+                        $script:lastMessage = $result.Message
+                        $statusChanged = $true
+                    }
+                    $script:componentsReady = $readyNow
+                } elseif ($completed -eq 'Start' -or $completed -eq 'Restart') {
+                    $script:componentsReady = [bool]$result.Ok
+                } elseif ($completed -eq 'Stop' -and $result.Ok) { $script:componentsReady = $false }
                 $script:running = [bool]$result.Running
                 if ($completed -ne 'Status') { $script:lastMessage = $result.Message }
                 if ($result.Readiness) {
@@ -147,7 +161,7 @@ $timer.add_Tick({
             $tray.Text = 'Dungeon Crawl - ' + $(if ($script:running) { 'running' } else { 'stopped' })
             foreach ($item in $menu.Items) { $item.Enabled = $true }
             foreach ($item in $control.Controls) { if ($item -is [Windows.Forms.Button]) { $item.Enabled = $true } }
-            $details.Text = $script:lastMessage.Replace("`n", "`r`n")
+            if ($completed -ne 'Status' -or $statusChanged) { $details.Text = $script:lastMessage.Replace("`n", "`r`n") }
             $open.Enabled = $script:running; $stop.Enabled = $script:running; $restart.Enabled = $script:running
         }
         $script:ticks++

@@ -1,4 +1,6 @@
-# Dungeon Crawl: Local Interactive Storyteller — checkpoint 10 October 2026
+# Dungeon Crawl: Local Interactive Storyteller — checkpoint 11 October 2026
+
+11 October lifecycle correction: replaced the unmanaged Windows forwarding dependency with an application-owned private gateway. Start/Restart manage both gateway and web server and verify the actual HTTPS Dungeon page before opening the browser. Exit stops both. Normal unprivileged startup, gateway-loss recovery, backend-loss recovery, HTTPS/TLS and Speechify rejection boundaries pass. The old dungeon portproxy entry is removed; NAS-only firewall restrictions remain. No further computer reboot has been tested. This checkpoint includes the [generic networking and HTTPS guide](docs/NETWORKING-AND-HTTPS.md), distinct from the site-specific Synology implementation. See [development log](docs/DEVELOPMENT-LOG.md).
 
 ## Repository and deployment
 
@@ -6,7 +8,7 @@ Repository: [PopeKael/dungeon-crawl](https://github.com/PopeKael/dungeon-crawl).
 
 Independent Windows project at `F:\AI\DungeonCrawler`. Ariadne is not a runtime dependency and was not changed. Canonical start point: `DungeonCrawler.exe`, also installed as **Dungeon Crawl** on Desktop and in the Start menu. The native tray requires adjacent Node application, scripts, assets, configuration and data. It is built locally, not distributed as an installer or release binary.
 
-Production binds to `http://127.0.0.1:3000`; this installation uses private `https://dungeon.dia.net.au` through Synology and its NAS-only Windows bridge. No automatic startup task is installed. Exit stops the launcher-owned web process and closes the tray; shared Ollama remains running. The last lifecycle check left the game exited.
+Production binds to `http://127.0.0.1:3000`; the launcher also owns a Node HTTP gateway on `192.168.1.100:3001`, accepting only Synology's TCP peer and the configured public Host. Browser access remains private `https://dungeon.dia.net.au` through Synology's certificate and desktop ACL. The NAS-to-desktop hop remains HTTP, as before. No automatic startup task is installed. Exit stops both owned processes and closes the tray; shared Ollama remains running. The game is left running after acceptance.
 
 The active narrator is `qwen3.5:4b`, selected from the installed Ollama library. Ignored `.env.server` requests 65,536 tokens, disables thinking, caps custom replies at 2,048 tokens and defaults to manual image prompts. Saved story and app-wide settings can override environment defaults. Ignored `config/launcher.json` preserves the machine policy; `config/launcher.example.json` is the portable starting point.
 
@@ -23,7 +25,7 @@ The active narrator is `qwen3.5:4b`, selected from the installed Ollama library.
 | Long-story memory | Older passages outside the history budget fold into a persisted rolling summary. Best-effort summarisation retains the prior summary on failure; not guaranteed recall. The acceptance story has not triggered compaction at 64K. |
 | Images | Actual image-tool calls persist with prompt, reason, aspect and character references, shown as selectable text with Copy prompt. Manual mode refuses local rendering. Retained upstream local-image/ComfyUI paths are present but not accepted on this Windows hardware in this checkpoint. |
 | Voice | Speak selects a completed passage; an independent Windows helper retrieves saved passage IDs, writes the clipboard and sends fixed Alt+F1. Warren confirmed audible Speechify playback over HTTPS. No built-in local TTS, speech input or automatic narrator playback. |
-| Windows lifecycle | Native EXE, icon/favicon, Desktop/Start-menu shortcuts and application ID. GPU/VRAM/RAM readiness checks. Start/Restart/Stop/Exit validate the owned web process identity. Startup policy covers 4B/64K/manual images and holds unknown profiles. |
+| Windows lifecycle | Native EXE, icon/favicon, Desktop/Start-menu shortcuts and application ID. GPU/VRAM/RAM readiness checks. Start/Restart manage the local web server and private gateway; Stop/Exit validate both process identities before stopping them. Actual HTTPS app identity verified before browser opening. Lost components reported and restored by Start. Startup policy covers 4B/64K/manual images and holds unknown profiles. |
 
 ## Context diagnosis and measured performance
 

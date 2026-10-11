@@ -11,39 +11,12 @@ function Write-Step($Message) {
   Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
-function Stop-PortListeners($Port, $Name) {
-  if (-not (Get-Command "Get-NetTCPConnection" -ErrorAction SilentlyContinue)) {
-    throw "Get-NetTCPConnection is not available on this Windows install."
-  }
-
-  $connections = @(
-    Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-  )
-  $processIds = @(
-    $connections |
-      Select-Object -ExpandProperty OwningProcess -Unique |
-      Where-Object { $_ -and $_ -gt 0 }
-  )
-
-  if (-not $processIds.Count) {
-    Write-Host "$Name is not listening on port $Port."
-    return
-  }
-
-  foreach ($processId in $processIds) {
-    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if (-not $process) {
-      continue
-    }
-
-    Write-Host "Stopping $Name on port ${Port}: $($process.ProcessName) ($processId)"
-    Stop-Process -Id $processId -Force
-  }
-}
-
 Write-Step "Stopping Open Dungeon"
-Stop-PortListeners 3000 "Open Dungeon web app"
-Stop-PortListeners 7869 "Open Dungeon image worker"
+$result = & (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe') -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'dungeon-worker.ps1') -Action Stop
+if ($LASTEXITCODE -ne 0) { throw ($result -join "`n") }
+$operation = $result | ConvertFrom-Json
+if (-not $operation.Ok) { throw $operation.Message }
+Write-Host $operation.Message
 
 if ($IncludeOllama) {
   Write-Step "Stopping Ollama"

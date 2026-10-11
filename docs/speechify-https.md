@@ -1,5 +1,7 @@
 # Speechify and private HTTPS
 
+This is **Wazza's site-specific reference implementation**, not a universal installation requirement. The domain, addresses, Synology configuration and Windows setup below describe this installation. Dungeon Crawl can run locally without Synology or a reverse proxy. Start with [Networking and HTTPS](NETWORKING-AND-HTTPS.md) for generic deployment modes and the network contract.
+
 Chosen origin: `https://dungeon.dia.net.au`.
 
 ## Speak implementation
@@ -30,7 +32,7 @@ Verified: UI prose selection, exact 471-character clipboard match, Windows accep
 - `dungeon.dia.net.au` initially returned NXDOMAIN.
 - SSH identity is unreadable even outside sandbox. User provided logged-in DSM browser access instead. No local Ariadne files will be read further; GitHub is the reference source.
 
-## Active deployment (2026-10-10)
+## Original deployment (2026-10-10; forwarding superseded below)
 
 Warren approved activation of the desktop-only private route and accepted the Windows administrator prompts.
 
@@ -42,7 +44,7 @@ Warren approved activation of the desktop-only private route and accepted the Wi
 6. Desktop hosts entry: `192.168.1.200 dungeon.dia.net.au # DungeonCrawler private HTTPS`. Only this entry appended; prior file backed up in ignored logs/hosts-before-dungeon.txt. This affects only the desktop.
 7. `curl` HTTPS returned 200 with certificate verification result 0 (no trust bypass). Opera loaded the saved story over HTTPS, generated and saved another narration, and successfully handed a selected passage to Speechify. Warren confirmed audible playback. Reader boundary tests 6/6 and phase 1 persistence/manual-image/SQLite checks passed through HTTPS. Story now contains 13 messages. External deny behavior is configured by DSM ACL; it has not been tested from a separate Internet client.
 
-Administrator commands (already applied):
+Historical administrator commands (applied on 10 October; not fresh-checkout instructions). The upstream helper has since changed: its current `Install` action migrates to the owned gateway rather than installing the old portproxy. Use the current gateway section below for this site's maintenance.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File F:\AI\DungeonCrawler\scripts\configure-private-upstream.ps1 -Action Install
@@ -55,11 +57,49 @@ The TCP forwarding mechanism is documented in [Microsoft netsh interface](https:
 
 Do not expose the unauthenticated game or Windows reader endpoint publicly. No router changes are needed for private use. No new domain purchase is required. Public DNS/certificate issuance and private application access are separate concerns.
 
+## Application-owned private gateway (11 October 2026)
+
+The domain and browser HTTPS route are unchanged. The current path is:
+
+`browser HTTPS -> Synology certificate + desktop ACL -> HTTP 192.168.1.100:3001 (owned Node gateway, NAS peer only) -> HTTP 127.0.0.1:3000 (Next.js)`.
+
+This follows Ariadne's application-owned gateway lifecycle. Ariadne's gateway uses TLS on its upstream hop; Dungeon retains the existing private HTTP NAS-to-desktop hop configured on DSM. Only the browser-to-Synology hop is encrypted in Dungeon's deployment. No Ariadne code, configuration, certificate or model was changed.
+
+The launcher starts both components, records each process identity, verifies listener ownership and the actual HTTPS Dungeon page, then opens the browser. Stop/Exit close both listeners. Start restores a missing gateway or backend. The gateway checks the actual TCP peer against the NAS address and Host against the configured public origin; forwarding headers cannot grant access. It forwards streaming responses without collecting the whole body, preserves request origins and binary uploads, and restricts its backend to loopback. Its listener is an ordinary unprivileged Node process, not IP Helper. Existing Windows Firewall and DSM restrictions remain in force.
+
+For this installation, ignored `config/launcher.json` includes:
+
+```json
+{
+  "appUrl": "https://dungeon.dia.net.au/",
+  "port": 3000,
+  "privateGateway": { "bind": "192.168.1.100", "port": 3001, "allowedPeer": "192.168.1.200" }
+}
+```
+
+These fields are added to the existing readiness policy. A loopback-only checkout can keep `config/launcher.example.json` without a privateGateway. The current Windows launcher's HTTPS startup requires the owned gateway; it does not silently fall back to the former forwarding mechanism. This is a launcher limitation, not a requirement that every HTTPS deployment use this gateway or Synology; see the [generic deployment guide](NETWORKING-AND-HTTPS.md).
+
+One-time administrator installation/migration (normal launches do not elevate):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File F:\AI\DungeonCrawler\scripts\configure-private-upstream.ps1 -Action Install
+```
+
+This validates the existing NAS-only firewall rules, creates them if absent, and removes only the old dungeon portproxy entry if its target matches the original deployment. It does not restart IP Helper or touch other forwarding entries. `Repair` is retained as an alias for installation/migration, not recreation of a Windows bridge. `Status` is read-only. The script deliberately covers only the reviewed desktop/NAS addresses; another installation needs its own reviewed firewall scope.
+
+Tests: `node scripts/verify-dungeon-gateway.mjs`, `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-dungeon-processes.ps1`, and `scripts/verify-dungeon-launcher.ps1`. Gateway tests use a disposable loopback backend, not saved stories or GPU inference. Reader boundary tests should also pass through HTTPS.
+
+## Historical reboot failure
+
+The saved portproxy rule and firewall rules can still exist while no process listens on `192.168.1.100:3001`. In that state the loopback game and GPU model can be healthy while private HTTPS times out. Confirm the listener with `Get-NetTCPConnection -LocalAddress 192.168.1.100 -LocalPort 3001 -State Listen`; a saved rule alone does not prove a working bridge.
+
+On 11 October, an in-place refresh failed but recreating the entry restored the listener and verified HTTPS. That manual repair was superseded by the owned gateway above. The underlying reason IP Helper failed to listen after reboot was not established; the application no longer depends on that mechanism.
+
 ## Reversal
 
 Disable `WINDOWS_READER_ENABLED` and restart to stop native handoffs. Remove only the new dungeon proxy/certificate assignment, DNS/hosts entry and game-specific network rules when reversing deployment. Preserve all existing Ariadne and other site settings.
 
-Remove only the tagged DungeonCrawler hosts line; do not overwrite the whole hosts file from the backup if later edits exist. The bridge and firewall rules persist across Windows restarts; the game still requires its normal production start command. No new background game startup task was installed.
+Stop Dungeon before removing its gateway firewall protection with `configure-private-upstream.ps1 -Action Remove`. Remove only the tagged DungeonCrawler hosts line; do not overwrite the whole hosts file from an old backup. The owned gateway starts on each application launch; the firewall rules persist across Windows restarts. No new background startup task or Windows service was installed. To intentionally restore the original source checkpoint, restore its matching launcher/config and reviewed portproxy setup together; do not reintroduce the old forwarding entry while the owned gateway is listening on the same port.
 
 Ignored evidence: logs/dungeon-dns-saved.jpg, logs/dungeon-proxy-saved.jpg, logs/dungeon-certificate.jpg, logs/dungeon-https-speak.jpg, logs/dungeon-https.html.
 

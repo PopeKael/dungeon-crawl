@@ -15,6 +15,8 @@
     "start:tailscale": "next start -H 0.0.0.0 -p 3002",
     "lint": "eslint",
     "check:player-characters": "node scripts/verify-player-characters.mjs",
+    "check:private-gateway": "node scripts/verify-dungeon-gateway.mjs",
+    "check:owned-processes": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-dungeon-processes.ps1",
     "check:windows-launchers": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\check-windows-launchers.ps1",
     "check:image-routing": "node scripts/run-python.mjs scripts/check-image-server-routing.py",
     "check:image-server-http": "node scripts/run-python.mjs scripts/check-image-server-http.py",

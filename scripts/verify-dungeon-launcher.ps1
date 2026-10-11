@@ -23,7 +23,7 @@ $s = New-Snapshot; $s.Samples = @(@{Busiest=50;ThreeD=0},@{Busiest=50;ThreeD=0},
 Assert-That (-not (Get-DungeonDecision $s $config).Ready) 'Compute work must block.'
 $s = New-Snapshot; $s.Samples = @(@{Busiest=90;ThreeD=90},@{Busiest=5;ThreeD=5},@{Busiest=5;ThreeD=5})
 Assert-That (Get-DungeonDecision $s $config).Ready 'One transient spike must not look like sustained work.'
-foreach ($file in @('dungeon-tray.ps1','dungeon-worker.ps1','dungeon-readiness.ps1','install-dungeon-shortcut.ps1')) {
+foreach ($file in @('dungeon-tray.ps1','dungeon-worker.ps1','dungeon-readiness.ps1','dungeon-processes.ps1','configure-private-upstream.ps1','stop-windows.ps1','install-dungeon-shortcut.ps1')) {
     $tokens = $null; $parseErrors = $null
     $null = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $file), [ref]$tokens, [ref]$parseErrors)
     Assert-That ($parseErrors.Count -eq 0) ("Parse errors in ${file}: " + ($parseErrors -join ', '))

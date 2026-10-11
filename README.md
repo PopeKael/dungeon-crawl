@@ -15,7 +15,7 @@ The idea is a book created while you play and listen: choose an action, let the 
 - **Narration through Speechify:** Speak beneath a completed passage selects its prose and hands it to the installed Windows reader using Alt+F1. Audible playback has been confirmed over private HTTPS. This is a manual reader handoff, not built-in local speech generation or speech input.
 - **Illustration requests:** the narrator can save scene prompts with aspect and character references for manual copying. Upstream local image/ComfyUI paths remain available; this Windows checkpoint uses **Manual prompt only**, with no automatic local rendering.
 - **Story openings:** Fantasy, Mystery, Cyberpunk, Apocalyptic, Horror and Romance presets, plus a custom scenario.
-- **Windows application:** `DungeonCrawler.exe`, Desktop/Start-menu shortcuts, an icon and native tray controls. Startup checks GPU activity, VRAM and RAM. **Exit stops the owned web process and closes the tray.** The guarded startup profile currently covers 4B / 64K / manual illustrations.
+- **Windows application:** `DungeonCrawler.exe`, Desktop/Start-menu shortcuts, an icon and native tray controls. Startup checks GPU activity, VRAM and RAM, manages the local web server and any configured private gateway, and verifies the configured browser URL before opening it. **Exit stops the owned processes and closes the tray.** The guarded startup profile currently covers 4B / 64K / manual illustrations.
 
 On the tested RX 7800 XT, controlled short-prompt decode measured roughly **99–100 tokens/sec for 4B versus 70 for 9B** at 4K context. The corrected 64K run measured about **94 tokens/sec**, with **5.61 GB (5.22 GiB)** of resident GPU memory. The earlier ~3.1 GB figure was the 4K allocation. These are local measurements, not hardware-independent requirements; see [checkpoint evidence and limits](PROJECT-STATUS.md).
 
@@ -33,7 +33,9 @@ npm install
 
 Create your local `.env.server` from the [tested text/manual-image configuration](docs/phase1-local.md), then follow the [Windows EXE build and shortcut instructions](docs/windows-launcher.md). The EXE is built locally; this checkpoint does not publish an installer or downloadable Windows release. A terminal alternative after configuration is `npm run build` followed by `npm run start -- --hostname 127.0.0.1 --port 3000`.
 
-Stories and settings stay in the local `data/` directory, which Git does not back up. Local text generation needs no cloud account. Remote providers and external readers have their own data handling; choosing them changes where content goes. The tested Speechify route uses private HTTPS through Synology. The app has no user authentication: keep it private and use the [deployment guide](docs/speechify-https.md) for reader setup.
+Dungeon Crawl works locally without a NAS or reverse proxy. See [Networking and HTTPS](docs/NETWORKING-AND-HTTPS.md) for local HTTP and configurable HTTPS deployment modes.
+
+Stories and settings stay in the local `data/` directory, which Git does not back up. Local text generation needs no cloud account. Remote providers and external readers have their own data handling; choosing them changes where content goes. The tested Speechify route uses private HTTPS through Synology; its [site-specific reference implementation](docs/speechify-https.md) records reader setup. The app has no user authentication: keep it private.
 
 ## Direction / roadmap
 
@@ -51,7 +53,8 @@ Read the fuller [product vision](docs/PRODUCT-VISION.md), the ordered [roadmap](
 | [Player Characters](docs/player-characters.md) | Actor selection, attribution, Random Event and legacy compatibility |
 | [Local text and 64K context](docs/phase1-local.md) / [model library](docs/model-library.md) | Tested Qwen configuration, history budget and model selection |
 | [Windows executable](docs/windows-launcher.md) | Build, shortcuts, readiness policy and lifecycle controls |
-| [Speechify and private HTTPS](docs/speechify-https.md) | Reader handoff and deployment boundaries |
+| [Networking and HTTPS](docs/NETWORKING-AND-HTTPS.md) | Generic deployment modes and browser-to-application network contract |
+| [Speechify and private HTTPS](docs/speechify-https.md) | Reader handoff and Wazza's site-specific Synology reference implementation |
 | [Save, resume and delete](docs/save-resume.md) | Story persistence and bookmarks |
 | [Text backends](docs/text-backends.md) / [image generation](docs/image-generation.md) | Retained upstream provider and image options; platform-specific testing differs |
 
