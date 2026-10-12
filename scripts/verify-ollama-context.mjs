@@ -80,6 +80,14 @@ try {
   assert.equal(calls[0].body.think, false);
   assert.ok(calls[0].body.tools?.length);
   assert.equal(calls[0].headers.Authorization, 'Bearer test-key');
+  fixture.messages = [
+    { id: 'prior-image', role: 'assistant', content: 'You enter the city.', createdAt: new Date().toISOString(), imageRequest: { needed: true, prompt: 'Wide establishing view of Aethelgard inside the cavern.' } },
+    { id: 'later-passage', role: 'assistant', content: 'A door opens into the crystal spire.', createdAt: new Date().toISOString() },
+  ];
+  await turn();
+  assert.match(calls[0].body.messages.at(-1).content, /1 narrated passage\(s\) since the previous illustration request/);
+  assert.match(calls[0].body.messages.at(-1).content, /Wide establishing view of Aethelgard/);
+  assert.match(calls[0].body.messages.at(0).content, /new action phase such as a confrontation/);
   rejectTools = true; rejectThinking = true;
   await turn();
   assert.equal(calls.length, 3);

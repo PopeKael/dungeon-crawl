@@ -9,11 +9,23 @@ prepares the renderer before opening the story app and shuts it down with the
 other Dungeon workloads.
 
 Automatic story images are enabled by default and can be disabled in the Images
-panel. When the narrator requests an illustration, Dungeon saves the hidden
-request against its assistant passage and dispatches it as soon as it arrives;
-visible narration continues while the renderer works. The passage shows a
-placeholder, then the resulting PNG. The image and request remain linked in
-saved story context, and a failed image can be retried from the passage.
+panel. The narrator now compares each new beat with the last requested image,
+including how many narrated passages have followed it. The target cadence is
+one image every 2–4 passages when the view changes, with an immediate request
+for a distinct location, major reveal, dramatic entrance, time/weather change,
+or new action phase. Ordinary dialogue and small movements in the same view
+remain unillustrated. This cadence is guidance to the narrator, not a hard
+timer: the model still decides whether the visual meaningfully changed.
+
+Image prompts are tuned for the four-step SDXL-Lightning checkpoint: one frozen
+moment in 35–70 words, with a clear subject/action, foreground-to-background
+composition, lighting and mood. The prompt should depict a single scene rather
+than summarizing the passage or combining sequential events. Dungeon saves the
+hidden request against its assistant passage and dispatches it as soon as it
+arrives; visible narration continues while the renderer works. The passage
+shows a placeholder, then the resulting PNG. The image and request remain
+linked in saved story context, and a failed image can be retried from the
+passage.
 
 The tested settings are 960×536 landscape, Euler, `sgm_uniform`, 4 steps,
 CFG 1.0, and a 6 GiB managed Vulkan budget. While `qwen3.5:4b` remained resident

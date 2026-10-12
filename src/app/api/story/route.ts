@@ -74,6 +74,10 @@ const messageSchema = z.object({
   content: z.string(),
   createdAt: z.string(),
   attachments: z.array(attachmentSchema).optional(),
+  imageRequest: z.object({
+    needed: z.boolean(),
+    prompt: z.string().max(1_200).optional(),
+  }).optional(),
   actorCharacterId: z.string().optional(),
   actorCharacterName: z.string().optional(),
   inputKind: z.literal("random-event").optional(),
@@ -120,7 +124,7 @@ const generateImageTool = {
   function: {
     name: "generate_image",
     description:
-      "Request one illustration for a meaningful visual beat in the current roleplay scene. Use sparingly.",
+      "Request one image when the story reaches a materially new visual scene. Illustrate major location/reveal/action changes immediately; between them, aim for one image every 2–4 passages when the view changes. Do not image every turn or repeat the previous composition.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -128,7 +132,7 @@ const generateImageTool = {
         prompt: {
           type: "string",
           description:
-            "Detailed visual prompt. Include subject, environment, composition, lighting, camera style, mood, and avoid text overlays. For established characters, describe visible physical features and whether each person is a man or woman; do not rely on character names inside the prompt.",
+            "Write 35–70 words describing one frozen moment: subject and action, foreground/midground/background, wide composition, lighting and mood. Keep it concrete and visually distinct from the prior image; no sequential events or text. Dungeon Crawl appends canonical saved character appearance and clothing.",
         },
         reason: {
           type: "string",
@@ -1085,6 +1089,7 @@ export async function POST(request: Request) {
     characters,
     storySummary,
     turnIdentity,
+    body.messages,
   ) as OpenRouterMessage[];
   const characterVisionMessage = buildCharacterVisionMessage(characters);
   const messages = characterVisionMessage

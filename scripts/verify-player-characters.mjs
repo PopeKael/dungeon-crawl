@@ -85,6 +85,18 @@ const chatsRoute=load('src/app/api/chats/route.ts');
   assert.equal(newStory.characters[0].equipped,'Bow');
   const newPlayerPrompt=prompt.buildStoryMessages([], 'Begin',newStory.settings,newStory.characters)[0].content;
   for(const state of ['Appearance:\nFreckled','Wearing:\nTravel cloak','Equipped:\nBow','Inventory:\nRations','Skills:\nTracking','Spells:\nNone']) assert.ok(newPlayerPrompt.includes(state),`New Player Character narrator context includes ${state}`);
+  const illustratedHistory=[
+    {id:'opening-image',role:'assistant',content:'Aethelgard descends through the cavern.',createdAt:'2026-10-11',imageRequest:{needed:true,prompt:'Wide establishing view of the ancient basalt city and amber river.'}},
+    {id:'passage-one',role:'assistant',content:'You cross the bridge into the inner city.',createdAt:'2026-10-11'},
+    {id:'passage-two',role:'assistant',content:'The monk opens the crystal spire.',createdAt:'2026-10-11'},
+  ];
+  const visualPrompt=prompt.buildStoryMessages(illustratedHistory,'> Enter the chamber',newStory.settings,newStory.characters).at(-1).content;
+  assert.match(visualPrompt,/2 narrated passage\(s\) since the previous illustration request/,'Visual cadence tracks passages since the last image');
+  assert.match(visualPrompt,/Wide establishing view of the ancient basalt city/,'The narrator receives the prior scene description for comparison');
+  assert.match(visualPrompt,/materially new location or action tableau should get an image now/,'A new scene is an immediate illustration trigger');
+  assert.match(newPlayerPrompt,/35–70 word prompt for one frozen moment/,'Prompt style is tuned for a concise SDXL-Lightning scene plate');
+  const firstVisualPrompt=prompt.buildStoryMessages([], 'Begin',newStory.settings,newStory.characters).at(-1).content;
+  assert.match(firstVisualPrompt,/no previous illustration/,'Opening scenes can receive an establishing illustration');
   await assert.rejects(()=>chatsRoute.POST(new Request('http://localhost/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Missing player',settings:{}})})),/playerCharacter/);
   db.updateCharacter(chat.id,added.id,{controlType:'npc'});
 

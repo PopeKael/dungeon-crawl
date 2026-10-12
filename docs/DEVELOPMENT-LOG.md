@@ -1,5 +1,13 @@
 # Development log
 
+## 12 October 2026 — Improve scene illustration cadence and visual prompts
+
+The existing saved test adventure had produced one illustration while many later narrated passages established new views. Renderer measurements are already within the target range, so the weak point was the narrator's decision guidance: it said to use images “sparingly” and did not tell the model what scene had last been illustrated or how long ago.
+
+Changed the image instructions to aim for a scene plate every 2–4 narrated passages when the view materially changes, and to request one immediately for a new location, major reveal, dramatic entrance, time/weather shift, or new action phase. Small movements and dialogue within the same view remain unillustrated. Each narration request now carries the prior image prompt plus the number of later passages, so Qwen can compare the next beat against the current saved adventure. Prompts are tuned to SDXL-Lightning as one concise 35–70 word frozen moment with a clear subject/action, layered composition, lighting and mood. The narrator still decides whether an ordinary beat merits an image; the cadence is guidance, not a hard timer.
+
+Added regression checks that an old image and passage gap survive the story request schema and reach the narrator, and that opening scenes are eligible for an establishing image. Player-character/database migration checks, the mocked Ollama 64K/story route check, scoped ESLint and the production build passed. No live model was run and the saved story was not advanced for this change. The next normal Continue/turn in the existing adventure will exercise the new scene comparison; actual image selection still needs acceptance against live Qwen and the user's visual judgment.
+
 ## 11 October 2026 — Passage-linked Vulkan illustrations and lifecycle checkpoint
 
 Integrated the measured SDXL-Lightning 4-step FP16 `stable-diffusion.cpp` Vulkan backend as a Dungeon-owned, headless Windows workload. The renderer is started and checked by the launcher, receives image jobs over loopback, and is stopped through Dungeon's owned-process lifecycle. Model and runtime binaries stay local and Git-ignored. The browser saves each hidden image request with its assistant passage, dispatches it as soon as it arrives, and continues displaying the streamed narration. The placeholder is replaced by the generated PNG; saved history retains the request/image link, and failed jobs can be retried.
