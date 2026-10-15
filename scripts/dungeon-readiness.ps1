@@ -16,10 +16,10 @@ function Get-DungeonDecision($Snapshot, $Config) {
         if ($null -eq $Snapshot.ModelBudgetGiB) {
             $reasons.Add("No verified startup memory budget is configured for $($Snapshot.Model). Add a measured budget before using it as the launch default.")
         } else {
-            $additional = [Math]::Max(0, $Snapshot.ModelBudgetGiB - $Snapshot.ReusableModelGiB)
+            $additional = [Math]::Max([double]0, [double]$Snapshot.ModelBudgetGiB - [double]$Snapshot.ReusableModelGiB)
             $imageBudget = [double]$Snapshot.ImageBackendBudgetGiB
             $reusableImage = [double]$Snapshot.ReusableImageBackendGiB
-            $additionalImage = [Math]::Max(0, $imageBudget - $reusableImage)
+            $additionalImage = [Math]::Max([double]0, [double]$imageBudget - [double]$reusableImage)
             $required = $additional + $additionalImage + $Config.vramHeadroomGiB
             if ($Snapshot.FreeVramGiB -lt $required) {
                 $reasons.Add(('Insufficient free VRAM: {0:N1} GiB free; {1:N1} GiB required for the narrator, image renderer and headroom. Other resident models will not be unloaded.' -f $Snapshot.FreeVramGiB, $required))

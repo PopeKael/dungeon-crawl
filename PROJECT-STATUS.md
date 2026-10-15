@@ -1,4 +1,6 @@
-# Dungeon Crawl: Local Interactive Storyteller — checkpoint 11 October 2026
+# Dungeon Crawl: Local Interactive Storyteller — source update 15 October 2026
+
+15 October source update: fixed fractional GiB rounding in the Windows launch readiness calculation. The installed and example policy now budgets 5.5 GiB for Qwen 4B, 5.75 GiB for the Vulkan renderer, and reserves 1.25 GiB headroom; the measured 12.8 GiB post-handoff case passes. Focused readiness/syntax verification passed. Live integrated launch was not repeated: current pre-handoff telemetry showed 6.5 GiB free, so current live post-release availability has not been established.
 
 11 October checkpoint: the native launcher owns the private gateway, web server, narrator startup readiness and Dungeon-owned image renderer lifecycle. The user completed a clean startup, browser, stop and exit loop. Story illustrations use the headless Vulkan SDXL-Lightning renderer; automatic passage-linked requests start while narration streams. Three warm 960×536 renders coexisted with resident Qwen 3.5 4B at 65K context in 11.94–11.95 seconds, with 14.096 GiB peak dedicated GPU memory. See [measured image rendering results](docs/image-rendering-results.md) and [development log](docs/DEVELOPMENT-LOG.md). The private gateway and web server are managed together; NAS-only firewall restrictions remain. No further computer reboot has been tested. This checkpoint includes the [generic networking and HTTPS guide](docs/NETWORKING-AND-HTTPS.md), distinct from the site-specific Synology implementation.
 

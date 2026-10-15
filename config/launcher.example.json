@@ -2,10 +2,10 @@
   "appUrl": "http://127.0.0.1:3000/",
   "port": 3000,
   "minimumFreeRamGiB": 4,
-  "vramHeadroomGiB": 2,
+  "vramHeadroomGiB": 1.25,
   "busyEnginePercent": 25,
   "busy3DPercent": 15,
   "busySamplesRequired": 2,
-  "modelBudgetsGiB": { "qwen3.5:4b": 6 },
-  "imageBackendBudgetsGiB": { "sd-cpp-vulkan": 6 }
+  "modelBudgetsGiB": { "qwen3.5:4b": 5.5 },
+  "imageBackendBudgetsGiB": { "sd-cpp-vulkan": 5.75 }
 }

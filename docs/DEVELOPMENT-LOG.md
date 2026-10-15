@@ -1,5 +1,11 @@
 # Development log
 
+## 15 October 2026 — Correct fractional VRAM readiness calculation
+
+The launcher passed integer `0` as the first argument to PowerShell `Math.Max`, which selected the integer overload. Fractional narrator and renderer budgets (5.5 and 5.75 GiB) were rounded up to 6 GiB each, keeping the cold-start threshold at 13.25 GiB and rejecting the measured 12.8 GiB post-handoff case. Both `Math.Max` calls now use explicit double arguments. The measured Qwen 4B budget is 5.5 GiB, the Vulkan renderer budget is 5.75 GiB, and headroom remains 1.25 GiB; its separate runtime cap remains 6 GiB. The tracked launcher example and this machine's ignored policy were updated without changing its endpoint or gateway settings.
+
+Added readiness coverage for the decimal threshold and the 12.8 GiB case. `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-dungeon-launcher.ps1` passed, including launcher PowerShell parsing. It launches no workloads. Ariadne currently reported 6.5 GiB free before a new handoff; integrated live launch and restore acceptance was not repeated in this source checkpoint.
+
 ## 12 October 2026 — Improve scene illustration cadence and visual prompts
 
 The existing saved test adventure had produced one illustration while many later narrated passages established new views. Renderer measurements are already within the target range, so the weak point was the narrator's decision guidance: it said to use images “sparingly” and did not tell the model what scene had last been illustrated or how long ago.
