@@ -61,3 +61,9 @@ Read the fuller [product vision](docs/PRODUCT-VISION.md), the ordered [roadmap](
 Open Dungeon's original work is by **newideas99 (Jacob Ferrari)**. The original MIT copyright notice remains intact. This fork is independently developed by Warren “Wazza” Gerdes / PopeKael. Any retained GitHub Sponsor or Ko-fi links support the **original Open Dungeon maintainer**. No proprietary world or setting source material is distributed here.
 
 The inherited narrator prompt permits consensual adult fiction between adults. Review the prompt and choose suitable content boundaries for your own private sessions.
+
+## Help and community
+
+Please [open an Issue](https://github.com/PopeKael/dungeon-crawl/issues) to report a reproducible bug or suggest an improvement to this independently developed fork. Include the application version, model/backend, steps and observed behaviour. Do not publish private stories, personal settings or API credentials.
+
+This fork is one of the experiments shared through [Garage Alchemy](https://garage.dia.net.au/). **Optional support for Wazza's work on this fork:** [Buy Me a Coffee](https://buymeacoffee.com/warrengerdes) · [Join the Tribe on Patreon](https://www.patreon.com/c/chanyawazza). These are not the original Open Dungeon maintainer's support links; the upstream author and MIT licence remain credited above.
