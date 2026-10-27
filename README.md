@@ -64,6 +64,6 @@ The inherited narrator prompt permits consensual adult fiction between adults. R
 
 ## Help and community
 
-Please [open an Issue](https://github.com/PopeKael/dungeon-crawl/issues) to report a reproducible bug or suggest an improvement to this independently developed fork. Include the application version, model/backend, steps and observed behaviour. Do not publish private stories, personal settings or API credentials.
+GitHub Issues is currently disabled on this fork. For now, please [open an Issue in the Garage Alchemy tracker](https://github.com/PopeKael/wazza-garage/issues) with **Dungeon Crawl:** at the start of the title to report a reproducible bug or suggest an improvement. Include the application version, model/backend, steps and observed behaviour. Do not publish private stories, personal settings or API credentials.
 
 This fork is one of the experiments shared through [Garage Alchemy](https://garage.dia.net.au/). **Optional support for Wazza's work on this fork:** [Buy Me a Coffee](https://buymeacoffee.com/warrengerdes) · [Join the Tribe on Patreon](https://www.patreon.com/c/chanyawazza). These are not the original Open Dungeon maintainer's support links; the upstream author and MIT licence remain credited above.
