@@ -256,12 +256,15 @@ function mapChatSummary(row: ChatRow): StoryChatSummary {
 }
 
 function mapMessage(row: MessageRow): StoryMessage {
-  const generatedImage = parseJson<GeneratedImage | undefined>(row.generated_image_json, undefined);
-  if (generatedImage?.url.startsWith("/generated/")) {
+  const parsedImages = parseJson<GeneratedImage | GeneratedImage[] | undefined>(row.generated_image_json, undefined);
+  const generatedImages = (Array.isArray(parsedImages) ? parsedImages : parsedImages ? [parsedImages] : []).map((image) => {
     // Next serves files in public/ as build-time assets. Generated PNGs are
     // written at runtime, so serve both old and new records through the API.
-    generatedImage.url = generatedImage.url.replace(/^\/generated\//, "/api/generated/");
-  }
+    return image.url.startsWith("/generated/")
+      ? { ...image, url: image.url.replace(/^\/generated\//, "/api/generated/") }
+      : image;
+  });
+  const generatedImage = generatedImages.at(-1);
 
   return {
     id: row.id,
@@ -271,6 +274,7 @@ function mapMessage(row: MessageRow): StoryMessage {
     attachments: parseJson<Attachment[]>(row.attachments_json, []),
     imageRequest: parseJson<ImageRequest | undefined>(row.image_request_json, undefined),
     generatedImage,
+    generatedImages: generatedImages.length ? generatedImages : undefined,
     actorCharacterId: row.actor_character_id || undefined,
     actorCharacterName: row.actor_character_name || undefined,
     inputKind: row.input_kind === "random-event" ? "random-event" : undefined,
@@ -598,16 +602,18 @@ export function addMessage(chatId: string, message: StoryMessage) {
 export function updateMessageGeneratedImage(messageId: string, generatedImage: GeneratedImage) {
   const db = getDatabase();
   const row = db
-    .prepare("SELECT chat_id FROM messages WHERE id = ?")
-    .get(messageId) as { chat_id: string } | undefined;
+    .prepare("SELECT chat_id, generated_image_json FROM messages WHERE id = ?")
+    .get(messageId) as { chat_id: string; generated_image_json: string | null } | undefined;
 
   if (!row) {
     return false;
   }
 
   const update = db.transaction(() => {
+    const stored = parseJson<GeneratedImage | GeneratedImage[] | undefined>(row.generated_image_json, undefined);
+    const images = Array.isArray(stored) ? stored : stored ? [stored] : [];
     db.prepare("UPDATE messages SET generated_image_json = ? WHERE id = ?").run(
-      JSON.stringify(generatedImage),
+      JSON.stringify([...images, generatedImage]),
       messageId,
     );
     db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(

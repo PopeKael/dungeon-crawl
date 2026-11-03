@@ -58,9 +58,30 @@ export type StoryMessage = {
   attachments?: Attachment[];
   imageRequest?: ImageRequest;
   generatedImage?: GeneratedImage;
+  generatedImages?: GeneratedImage[];
   actorCharacterId?: string;
   actorCharacterName?: string;
   inputKind?: "random-event";
+};
+
+export type ImageGenerationSettings = {
+  negativePrompt: string;
+  clipSkip: number;
+  width: number;
+  height: number;
+  strength: number;
+  batchCount: number;
+  scheduler: string;
+  sampleMethod: string;
+  sampleSteps: number;
+  guidanceScale: number;
+  vaeTilingEnabled: boolean;
+  vaeTileSizeWidth: number;
+  vaeTileSizeHeight: number;
+  vaeTargetOverlap: number;
+  preview: string;
+  outputFormat: string;
+  outputCompression: number;
 };
 
 export type GeneratedImage = {
@@ -74,6 +95,7 @@ export type GeneratedImage = {
   height: number;
   elapsedSeconds?: number;
   seed?: number;
+  generationSettings?: ImageGenerationSettings;
   warnings?: string[];
 };
 

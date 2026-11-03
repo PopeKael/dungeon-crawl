@@ -6,6 +6,7 @@ import {
   Backpack,
   BookOpen,
   Check,
+  ChevronLeft,
   ChevronRight,
   Cpu,
   Eraser,
@@ -857,8 +858,13 @@ export default function Home() {
     }
   }
 
-  async function requestGeneratedImage(chatId: string, messageId: string) {
-    if (!settings.imageGenerationEnabled) {
+  async function requestGeneratedImage(
+    chatId: string,
+    messageId: string,
+    regeneration?: { sourceImageId: string; prompt: string },
+    timing?: { traceId: string; startedAt: number },
+  ) {
+    if (!settings.imageGenerationEnabled && !regeneration) {
       return;
     }
 
@@ -871,13 +877,31 @@ export default function Home() {
         body: JSON.stringify({
           chatId,
           messageId,
+          ...(timing ? { traceId: timing.traceId } : {}),
+          ...regeneration,
         }),
       });
       const generatedImage = await readApi<GeneratedImage>(response);
+      if (timing) {
+        console.info("[dungeon-story-ui]", {
+          traceId: timing.traceId,
+          event: "image_response_received",
+          elapsedMs: Math.round(performance.now() - timing.startedAt),
+        });
+      }
 
       setMessages((current) =>
         current.map((message) =>
-          message.id === messageId ? { ...message, generatedImage } : message,
+          message.id === messageId
+            ? {
+                ...message,
+                generatedImage,
+                generatedImages: [
+                  ...(message.generatedImages || (message.generatedImage ? [message.generatedImage] : [])),
+                  generatedImage,
+                ],
+              }
+            : message,
         ),
       );
       setImageStatus((current) => {
@@ -886,7 +910,15 @@ export default function Home() {
         return next;
       });
       void refreshChats();
-    } catch {
+    } catch (imageError) {
+      if (timing) {
+        console.info("[dungeon-story-ui]", {
+          traceId: timing.traceId,
+          event: "image_fetch_interrupted_checking_saved_passage",
+          elapsedMs: Math.round(performance.now() - timing.startedAt),
+          errorType: imageError instanceof Error ? imageError.name : "unknown",
+        });
+      }
       // The renderer may finish and persist the image even if the browser's
       // POST response is interrupted by a proxy or transient connection error.
       // Re-read this chat briefly before showing a failure so the placeholder
@@ -895,13 +927,16 @@ export default function Home() {
         try {
           const response = await fetch(`/api/chats/${chatId}`, { cache: "no-store" });
           const payload = await readApi<ChatResponse>(response);
-          const generatedImage = payload.chat.messages.find((message) => message.id === messageId)
-            ?.generatedImage;
+          const updatedMessage = payload.chat.messages.find((message) => message.id === messageId);
+          const generatedImages = updatedMessage?.generatedImages ||
+            (updatedMessage?.generatedImage ? [updatedMessage.generatedImage] : []);
 
-          if (generatedImage) {
+          if (generatedImages.length) {
             setMessages((current) =>
               current.map((message) =>
-                message.id === messageId ? { ...message, generatedImage } : message,
+                message.id === messageId
+                  ? { ...message, generatedImage: generatedImages.at(-1), generatedImages }
+                  : message,
               ),
             );
             setImageStatus((current) => {
@@ -952,8 +987,21 @@ export default function Home() {
     };
     const placeholderId = makeId();
     let streamedMessageId = placeholderId;
-    let imageRequestStarted = false;
+    let imageRequestReceived = false;
+    let imageGenerationStarted = false;
     let streamedContent = "";
+    const turnStartedAt = performance.now();
+    let streamTraceId = "";
+    let firstDeltaLogged = false;
+    let firstDeltaPaintScheduled = false;
+    const logTurnTiming = (event: string, details: Record<string, unknown> = {}) => {
+      console.info("[dungeon-story-ui]", {
+        traceId: streamTraceId || null,
+        event,
+        elapsedMs: Math.round(performance.now() - turnStartedAt),
+        ...details,
+      });
+    };
 
     const finishTurn = (payload: {
       id?: string;
@@ -973,7 +1021,11 @@ export default function Home() {
         if (!existing) return [...current, assistantMessage];
         return current.map((message) =>
           message.id === streamedMessageId
-            ? { ...assistantMessage, generatedImage: message.generatedImage }
+            ? {
+                ...assistantMessage,
+                generatedImage: message.generatedImage,
+                generatedImages: message.generatedImages,
+              }
             : message,
         );
       });
@@ -983,10 +1035,14 @@ export default function Home() {
         opts.settings.imageGenerationEnabled &&
         payload.imageRequest?.needed &&
         payload.imageRequest.prompt &&
-        !imageRequestStarted
+        !imageGenerationStarted
       ) {
-        void requestGeneratedImage(opts.chatId, assistantMessage.id);
-        imageRequestStarted = true;
+        imageGenerationStarted = true;
+        logTurnTiming("image_fetch_started");
+        void requestGeneratedImage(opts.chatId, assistantMessage.id, undefined, {
+          traceId: streamTraceId,
+          startedAt: turnStartedAt,
+        });
       }
     };
 
@@ -1039,7 +1095,10 @@ export default function Home() {
         id?: string;
         content?: string;
         imageRequest?: StoryMessage["imageRequest"];
+        generatedImage?: GeneratedImage;
+        traceId?: string;
       }) => {
+        if (event.traceId) streamTraceId = event.traceId;
         if (event.type === "image-request" && event.id && event.imageRequest?.needed) {
           const priorId = streamedMessageId;
           streamedMessageId = event.id;
@@ -1064,11 +1123,43 @@ export default function Home() {
               },
             ];
           });
-          imageRequestStarted = true;
-          void requestGeneratedImage(opts.chatId, event.id);
+          imageRequestReceived = true;
+          logTurnTiming("image_request_received");
+          setImageStatus((current) => ({ ...current, [event.id as string]: "loading" }));
+          return;
+        }
+        if (event.type === "image-generated" && event.id && event.generatedImage) {
+          const generatedImage = event.generatedImage;
+          setMessages((current) => current.map((message) =>
+            message.id === event.id
+              ? {
+                  ...message,
+                  generatedImage,
+                  generatedImages: [
+                    ...(message.generatedImages || (message.generatedImage ? [message.generatedImage] : [])),
+                    generatedImage,
+                  ],
+                }
+              : message,
+          ));
+          setImageStatus((current) => {
+            const next = { ...current };
+            delete next[event.id as string];
+            return next;
+          });
+          void refreshChats();
+          return;
+        }
+        if (event.type === "image-error" && event.id) {
+          setImageStatus((current) => ({ ...current, [event.id as string]: "error" }));
           return;
         }
         if (event.type === "delta" && typeof event.text === "string" && event.text) {
+          if (!firstDeltaLogged) {
+            firstDeltaLogged = true;
+            logTurnTiming("first_narration_delta_received", { characters: event.text.length });
+            firstDeltaPaintScheduled = true;
+          }
           if (!streamedContent) {
             setStreamingId(streamedMessageId);
             setMessages((current) => {
@@ -1100,9 +1191,16 @@ export default function Home() {
             );
           }
           streamedContent += event.text;
+          if (firstDeltaPaintScheduled) {
+            firstDeltaPaintScheduled = false;
+            window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+              logTurnTiming("first_narration_delta_painted");
+            }));
+          }
           return;
         }
         if (event.type === "done") {
+          logTurnTiming("passage_done_received");
           donePayload = event;
           return;
         }
@@ -1138,6 +1236,7 @@ export default function Home() {
       if (!donePayload) {
         throw new Error("The story stream ended before the passage finished.");
       }
+      logTurnTiming("story_stream_ended");
       const finished = donePayload as {
         id?: string;
         content?: string;
@@ -1151,7 +1250,7 @@ export default function Home() {
     } catch (storyError) {
       // Nothing was persisted for a failed stream; drop the partial passage
       // so the story matches what the server has.
-      if (streamedContent && !imageRequestStarted) {
+      if (streamedContent && !imageRequestReceived) {
         setMessages((current) => current.filter((message) => message.id !== streamedMessageId));
       }
       setError(
@@ -1733,6 +1832,12 @@ export default function Home() {
                               onRetry={() =>
                                 selectedChatId && message.imageRequest?.prompt &&
                                 requestGeneratedImage(selectedChatId, message.id)
+                              }
+                              onRegenerate={(image, prompt) =>
+                                selectedChatId && requestGeneratedImage(selectedChatId, message.id, {
+                                  sourceImageId: image.id,
+                                  prompt,
+                                })
                               }
                             />
                           )}
@@ -3907,42 +4012,100 @@ function SpeakButton({ chatId, messageId, disabled }: {
   );
 }
 
-function ImageBeat({ message, status, onRetry }: {
+function ImageBeat({ message, status, onRetry, onRegenerate }: {
   message: StoryMessage;
   status?: "loading" | "error";
   onRetry: () => void;
+  onRegenerate: (image: GeneratedImage, prompt: string) => void;
 }) {
   const isLoading = status === "loading";
   const isError = status === "error";
-  const [promptExpanded, setPromptExpanded] = useState(false);
+  const [promptEdits, setPromptEdits] = useState<Record<string, string>>({});
 
-  if (message.generatedImage) {
+  const images = message.generatedImages || (message.generatedImage ? [message.generatedImage] : []);
+  const latestImageId = images.at(-1)?.id;
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (latestImageId) setSelectedImageId(latestImageId);
+  }, [latestImageId]);
+
+  if (images.length) {
+    const selectedIndex = Math.max(0, images.findIndex((image) => image.id === selectedImageId));
+    const image = images[selectedIndex];
+    const prompt = promptEdits[image.id] ?? image.prompt;
+
     return (
-      <figure className="mt-6 overflow-hidden rounded-xl border border-stone-800 bg-stone-950">
+      <figure key={image.id} className="mt-6 overflow-hidden rounded-xl border border-stone-800 bg-stone-950">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={message.generatedImage.url}
-          alt={message.generatedImage.prompt}
+          src={image.url}
+          alt={image.prompt}
           className="max-h-[720px] w-full object-contain"
         />
-        <figcaption className="border-t border-stone-800 px-3 py-2 font-sans text-xs text-stone-500">
-          <div className="flex items-start justify-between gap-3">
-            <p className={cn("min-w-0 leading-5", promptExpanded ? "" : "line-clamp-2")}>
-              {message.generatedImage.prompt}
-            </p>
-            <span className="shrink-0 pt-0.5 tabular-nums">
-              {message.generatedImage.backend ? `${message.generatedImage.backend} · ` : ""}
-              {message.generatedImage.width}×{message.generatedImage.height}
-            </span>
+        <figcaption className="space-y-2 border-t border-stone-800 px-3 py-3 font-sans text-xs text-stone-400">
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate">Image {selectedIndex + 1} of {images.length} · seed {image.seed ?? "unknown"}</span>
+            <div className="flex shrink-0 items-center gap-2">
+              {images.length > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedImageId(images[selectedIndex - 1]?.id ?? image.id)}
+                    disabled={selectedIndex === 0}
+                    title="Previous image version"
+                    aria-label="Previous image version"
+                    className="inline-flex size-6 items-center justify-center rounded border border-stone-700 text-stone-300 hover:bg-stone-900 disabled:opacity-40"
+                  >
+                    <ChevronLeft className="size-3.5" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedImageId(images[selectedIndex + 1]?.id ?? image.id)}
+                    disabled={selectedIndex === images.length - 1}
+                    title="Next image version"
+                    aria-label="Next image version"
+                    className="inline-flex size-6 items-center justify-center rounded border border-stone-700 text-stone-300 hover:bg-stone-900 disabled:opacity-40"
+                  >
+                    <ChevronRight className="size-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              <span className="tabular-nums">
+                {image.backend ? `${image.backend} · ` : ""}{image.width}×{image.height}
+              </span>
+            </div>
           </div>
-          {message.generatedImage.prompt.length > 120 && (
+          <label className="block text-stone-500" htmlFor={`image-prompt-${image.id}`}>
+            Exact prompt sent to the image model
+          </label>
+          <div className="flex items-center gap-2">
+            <textarea
+              id={`image-prompt-${image.id}`}
+              value={prompt}
+              onChange={(event) => setPromptEdits((current) => ({ ...current, [image.id]: event.target.value }))}
+              rows={2}
+              className="min-w-0 flex-1 resize-y rounded border border-stone-700 bg-stone-900 px-2 py-2 leading-5 text-stone-200 focus:border-amber-500 focus:outline-none"
+            />
             <button
               type="button"
-              onClick={() => setPromptExpanded((value) => !value)}
-              className="mt-1 text-xs text-amber-200 hover:text-amber-100"
+              onClick={() => onRegenerate(image, prompt)}
+              disabled={isLoading || !prompt.trim()}
+              title="Regenerate this image"
+              aria-label="Regenerate this image"
+              className="inline-flex size-10 shrink-0 items-center justify-center rounded-full border border-amber-800 text-amber-200 hover:bg-amber-950/40 disabled:opacity-50"
             >
-              {promptExpanded ? "Show less" : "See more"}
+              {isLoading ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <RotateCcw className="size-4" aria-hidden="true" />
+              )}
             </button>
+          </div>
+          {(isError || isLoading) && (
+            <p role="status" className="text-stone-500">
+              {isError ? "Image generation failed." : "Generating image…"}
+            </p>
           )}
         </figcaption>
       </figure>
@@ -3972,9 +4135,18 @@ function ImageBeat({ message, status, onRetry }: {
         )}
       </div>
       {pendingPrompt && (
-        <p className={cn("mt-2 text-xs leading-5 text-stone-600", promptExpanded ? "" : "line-clamp-2")}>
-          {pendingPrompt}
-        </p>
+        <div className="mt-3 space-y-1.5">
+          <label className="block text-xs text-stone-500" htmlFor={`image-prompt-${message.id}`}>
+            Exact prompt sent to the image model
+          </label>
+          <textarea
+            id={`image-prompt-${message.id}`}
+            readOnly
+            value={pendingPrompt}
+            rows={3}
+            className="w-full resize-y rounded border border-stone-800 bg-stone-900 px-2 py-2 text-xs leading-5 text-stone-400"
+          />
+        </div>
       )}
     </div>
   );

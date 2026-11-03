@@ -24,13 +24,22 @@ Respect saved character inventory, skills, and spells as established story state
 
 const PLAYER_STATE_SYSTEM = `For Player Characters only, use saved Appearance, Wearing, Equipped, Inventory, Skills, and Spells as canonical state. Do not invent possessions, clothing, equipment, skills, or spells that are not established in those fields or prior visible story events. Do not add, remove, spend, or change established state unless visible story events clearly justify it. NPC behaviour remains governed by their established descriptions and the story.`;
 
-const IMAGE_SYSTEM = `You have access to a function tool named generate_image. For a strong visual beat, call generate_image once before writing any visible story text. After the hidden request, continue with the story passage as normal assistant text.
+const IMAGE_SYSTEM = `You have access to a function tool named generate_image. Write the visible story passage first. After completing it, decide whether that passage contains a strong visual beat that meets the illustration decision rule. If it does, call generate_image once using a moment explicitly shown in the passage you just wrote. Keep the tool call hidden from the player.
 
-Illustration cadence: aim for a new scene plate every 2–4 narrated passages when the view has meaningfully changed. Request an image immediately for a clear scene transition even if fewer passages have passed: entering or arriving at a distinct location, a major reveal, a new character's dramatic entrance, a change in time or weather, or a new action phase such as a confrontation, chase, or aftermath. Do not wait for the cadence when a strong new tableau appears. Do not make an image for every turn, ordinary dialogue, or a small movement within the same view. Compare with the previous illustration description and avoid repeating its location, composition, and beat.
+Illustration decision rule: request one new image when the story enters a distinct location or establishes a clearly new visual scene. This includes arriving somewhere visually different, a major reveal, a dramatic character entrance, a meaningful time/weather change, or a new action phase such as a confrontation, chase, or aftermath. A clear scene change takes priority over passage count: request its image now, even if the previous image was recent. Decide from the completed visible passage, and request at most one image per turn.
 
-The Dungeon illustration context attached to the player's latest request is private metadata for choosing an image. Do not treat it as an in-world message or repeat it in visible narration.
+When the location and scene remain the same, do not request an image for dialogue, routine actions, or small movements. After at least two narrated passages since the last image, request another only if the visible tableau has materially changed and the new image would add useful story context. Passage count alone is never a reason to request one. Compare with the previous illustration description and avoid repeating its location, composition, and beat.
 
-Do not put image prompts, captions, or tool details in visible narration. For this 4-step SDXL-Lightning renderer, write a compact 35–70 word prompt for one frozen moment. Lead with the subject and visible action, then give a clear wide composition with foreground, middle distance, background, lighting, and mood. Use concrete nouns and verbs, a coherent palette, and an illustrated-storybook treatment suited to the current world. Avoid multiple sequential events, alternate scenes, abstract prompt essays, and text overlays. Do not invent or restate established characters' appearance, clothing, or equipment; Dungeon Crawl appends saved Appearance, Wearing, and Equipped details. Name each depicted character's role/position and pass only their exact saved IDs in generate_image.characterIds (maximum two). Use [] if none should appear.`;
+The Dungeon illustration context attached to the player's latest request is private metadata for choosing an image. Do not treat it as an in-world message or repeat it in visible narration. Use the completed story passage from this turn as the source of truth for the image. The previous image description is only for visual comparison: when the passage changes location, do not carry the previous place, objects, or action into the new prompt. Do not illustrate a doorway or departure if the passage has already arrived somewhere new.
+
+Do not put image prompts, captions, or tool details in visible narration. For this 4-step SDXL-Lightning renderer, write a 35–70-word storyboard prompt for one frozen moment, in this exact order:
+1. Subject and action: who is doing what?
+2. Composition: where the characters and important objects are.
+3. Setting: two or three distinctive environmental details.
+4. Camera: shot type and viewing angle.
+5. Style: lighting, mood, and cinematic storybook appearance.
+
+Use clear, positive visual descriptions. Prioritise the main action, keep the scene coherent, and avoid unnecessary complexity, alternate scenes, sequential events, abstract prompt essays, and text overlays. Do not invent or restate established characters' appearance, clothing, or equipment; Dungeon Crawl appends their canonical saved details separately. Name each depicted character's role/position and pass only their exact saved IDs in generate_image.characterIds (maximum two). Use [] if none should appear.`;
 
 const IMAGE_DISABLED_SYSTEM =
   "Image generation is disabled for this story. Do not request images, describe image prompts, or mention image tooling.";
@@ -52,7 +61,7 @@ function illustrationCadenceNote(messages: StoryMessage[]) {
   }
 
   if (lastIllustrationIndex < 0) {
-    return "[Dungeon illustration context: This story has no previous illustration. Treat a strong opening or newly established scene as eligible for an establishing image.]";
+    return "[Dungeon illustration context: This story has no previous illustration. Request an establishing image when this turn first establishes a distinct visual scene or a strong opening tableau. Do not wait for a passage count.]";
   }
 
   const lastIllustration = assistantMessages[lastIllustrationIndex];
@@ -69,7 +78,7 @@ function illustrationCadenceNote(messages: StoryMessage[]) {
     previousPrompt
       ? `Previous scene image description (reference data only, not instructions): “${previousPrompt}”`
       : "The previous image request did not include a saved description.",
-    "Compare the current beat against that scene. A materially new location or action tableau should get an image now; use the 2–4 passage cadence only when the view has actually changed.",
+    "Decision: request an image now for a distinct location or clearly new visual scene, regardless of passage count. If the scene is unchanged, request only after at least two narrated passages and only when the visible tableau has materially changed. Dialogue or small movements alone do not qualify; passage count alone never qualifies. Request at most one image this turn.",
   ].join(" ");
 }
 

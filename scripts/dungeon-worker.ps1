@@ -157,15 +157,36 @@ function Test-Readiness {
     Set-LauncherProgress 12 1 $(if ($decision.Ready) { 'System checks passed' } else { 'System checks need attention' })
     $decision
 }
+function Test-ProductionBuildStale {
+    $buildStamp = Join-Path $taskRoot '.next/BUILD_ID'
+    if (-not (Test-Path -LiteralPath $buildStamp)) { return $true }
+
+    $buildInputs = @('src', 'package.json', 'package-lock.json', 'next.config.ts', 'postcss.config.mjs', 'tsconfig.json')
+    $inputFiles = foreach ($buildInput in $buildInputs) {
+        $inputPath = Join-Path $taskRoot $buildInput
+        if (-not (Test-Path -LiteralPath $inputPath)) { continue }
+        if ((Get-Item -LiteralPath $inputPath).PSIsContainer) {
+            Get-ChildItem -LiteralPath $inputPath -File -Recurse
+        } else {
+            Get-Item -LiteralPath $inputPath
+        }
+    }
+    $latestInput = $inputFiles | Measure-Object -Property LastWriteTimeUtc -Maximum
+    return $latestInput.Maximum -gt (Get-Item -LiteralPath $buildStamp).LastWriteTimeUtc
+}
 function Start-Web($decision) {
     if (-not $decision.Ready) { throw ($decision.Reasons -join "`n") }
+    if (Test-ProductionBuildStale) {
+        Set-LauncherProgress 10 1 'Building the latest Dungeon application source'
+        & npm run build
+        if ($LASTEXITCODE -ne 0) { throw 'The production build failed. The web app was not started.' }
+    }
     Set-LauncherProgress 15 2 'Checking Ollama and preparing the 4B narrator at 65K context'
     $settings = Get-Settings
     $gateway = Get-PrivateGateway
     Test-GatewayPort $gateway
     $node = (Get-Command node.exe -ErrorAction Stop).Source
     $next = Join-Path $taskRoot 'node_modules/next/dist/bin/next'
-    if (-not (Test-Path -LiteralPath (Join-Path $taskRoot '.next/BUILD_ID'))) { throw 'Production build is missing. Run npm run build in this project first.' }
     # Never replace a listener based solely on its port number.
     $owned = Get-OwnedWeb
     $listeners = @(Get-DungeonTcpListeners -LocalPort $config.port)

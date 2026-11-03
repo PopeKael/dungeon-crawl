@@ -1,5 +1,13 @@
 # Development log
 
+## 3 November 2026 — Ariadne exclusive-workload handoff
+
+Completed the optional Ariadne-to-Dungeon lifecycle integration. Ariadne now blocks new AI admissions, drains in-flight work, releases Home model/session leases, requests the Rust Host's exclusive Dungeon GPU lease and launches `DungeonCrawler.exe`. The native tray remains the lifecycle control surface. Because a duplicate launcher can signal an existing tray and exit successfully before Dungeon is ready, Rust Host now waits for HTTP readiness after that exit, monitors the service, and reports `CLOSED` only after normal service shutdown and successful runtime restoration.
+
+Live acceptance: System-page button returned an `ACTIVE` callback and opened Dungeon. The initial close attempt exposed two orphaned Node listeners from a prior Start worker whose saved identities were missing. A desktop-session inspection verified both executable paths, start times and the shared Dungeon worker parent. Their identity records were restored and Dungeon's own Stop worker returned `Ok=true`; port 3000 became unavailable, Rust Host received `CLOSED`, Ariadne restored Ollama and `qwen3.5:9b-q4_K_M`, and the System page returned to `READY` with 6.2 GB model VRAM. No unrelated process was stopped.
+
+The Ariadne startup preflight also stopped deserializing the 527 MiB embedding index just to report its size; this avoids the observed PowerShell out-of-memory failure before the Rust Host could continue startup. Verification passed: 11 Ariadne lifecycle unit tests, Python compilation, Rust release build, PowerShell parser check, whitespace checks, and the live start/close/restore cycle. Changes remain local; no commit or push was requested.
+
 ## 15 October 2026 — Correct fractional VRAM readiness calculation
 
 The launcher passed integer `0` as the first argument to PowerShell `Math.Max`, which selected the integer overload. Fractional narrator and renderer budgets (5.5 and 5.75 GiB) were rounded up to 6 GiB each, keeping the cold-start threshold at 13.25 GiB and rejecting the measured 12.8 GiB post-handoff case. Both `Math.Max` calls now use explicit double arguments. The measured Qwen 4B budget is 5.5 GiB, the Vulkan renderer budget is 5.75 GiB, and headroom remains 1.25 GiB; its separate runtime cap remains 6 GiB. The tracked launcher example and this machine's ignored policy were updated without changing its endpoint or gateway settings.

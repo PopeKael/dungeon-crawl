@@ -3,7 +3,7 @@ import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
-import type { GeneratedImage, StoryCharacter } from "@/lib/types";
+import type { GeneratedImage, ImageGenerationSettings, StoryCharacter } from "@/lib/types";
 
 const execFileAsync = promisify(execFile);
 const ROOT = process.cwd();
@@ -14,6 +14,25 @@ const IMAGE_HEIGHT = 536;
 const ENGINE_HEIGHT = 576;
 const GENERATION_TIMEOUT_MS = 6 * 60 * 1000;
 const POLL_INTERVAL_MS = 400;
+const DEFAULT_GENERATION_SETTINGS: ImageGenerationSettings = {
+  negativePrompt: "",
+  clipSkip: -1,
+  width: IMAGE_WIDTH,
+  height: IMAGE_HEIGHT,
+  strength: 1,
+  batchCount: 1,
+  scheduler: "sgm_uniform",
+  sampleMethod: "euler",
+  sampleSteps: 4,
+  guidanceScale: 1,
+  vaeTilingEnabled: false,
+  vaeTileSizeWidth: 256,
+  vaeTileSizeHeight: 256,
+  vaeTargetOverlap: 0.5,
+  preview: "none",
+  outputFormat: "png",
+  outputCompression: 100,
+};
 
 type LifecycleResult = { ok: boolean; error?: string };
 type SdcppImage = { b64_json?: string };
@@ -22,6 +41,15 @@ type SdcppJob = {
   status?: string;
   error?: string | { message?: string };
   result?: { images?: SdcppImage[] };
+};
+
+export type SdcppVulkanImageTask = {
+  jobId: string;
+  prompt: string;
+  seed: number;
+  generationSettings: ImageGenerationSettings;
+  lifecycleStartedAt: number;
+  startedAt: number;
 };
 
 function errorMessage(value: unknown, fallback: string) {
@@ -120,43 +148,64 @@ async function getJob(jobId: string): Promise<SdcppJob> {
   return (await response.json()) as SdcppJob;
 }
 
-export async function generateSdcppVulkanImage(options: {
-  scenePrompt: string;
-  characters: StoryCharacter[];
-}): Promise<GeneratedImage> {
+export async function submitSdcppVulkanImage(options: {
+  scenePrompt?: string;
+  characters?: StoryCharacter[];
+  prompt?: string;
+  seed?: number;
+  generationSettings?: ImageGenerationSettings;
+}): Promise<SdcppVulkanImageTask> {
   const lifecycleStartedAt = Date.now();
   await ensureSdcppVulkan();
 
-  const prompt = buildCanonicalImagePrompt(options.scenePrompt, options.characters);
-  const seed = crypto.getRandomValues(new Uint32Array(1))[0] % 2_147_483_647;
+  const prompt = options.prompt ?? buildCanonicalImagePrompt(options.scenePrompt || "", options.characters || []);
+  const generationSettings = options.generationSettings || DEFAULT_GENERATION_SETTINGS;
+  const seed = options.seed ?? (crypto.getRandomValues(new Uint32Array(1))[0] % 2_147_483_647);
   const startedAt = Date.now();
   const accepted = await postJson<{ id?: string }>(`${SERVER_URL}/sdcpp/v1/img_gen`, {
     prompt,
-    negative_prompt: "",
-    clip_skip: -1,
-    width: IMAGE_WIDTH,
-    height: IMAGE_HEIGHT,
-    strength: 1,
+    negative_prompt: generationSettings.negativePrompt,
+    clip_skip: generationSettings.clipSkip,
+    width: generationSettings.width,
+    height: generationSettings.height,
+    strength: generationSettings.strength,
     seed,
-    batch_count: 1,
+    batch_count: generationSettings.batchCount,
     sample_params: {
-      scheduler: "sgm_uniform",
-      sample_method: "euler",
-      sample_steps: 4,
-      guidance: { txt_cfg: 1 },
+      scheduler: generationSettings.scheduler,
+      sample_method: generationSettings.sampleMethod,
+      sample_steps: generationSettings.sampleSteps,
+      guidance: { txt_cfg: generationSettings.guidanceScale },
     },
-    vae_tiling_params: { enabled: false, tile_size_w: 256, tile_size_h: 256, target_overlap: 0.5 },
-    preview: "none",
-    output_format: "png",
-    output_compression: 100,
+    vae_tiling_params: {
+      enabled: generationSettings.vaeTilingEnabled,
+      tile_size_w: generationSettings.vaeTileSizeWidth,
+      tile_size_h: generationSettings.vaeTileSizeHeight,
+      target_overlap: generationSettings.vaeTargetOverlap,
+    },
+    preview: generationSettings.preview,
+    output_format: generationSettings.outputFormat,
+    output_compression: generationSettings.outputCompression,
   }, 30_000);
 
   if (!accepted.id) throw new Error("stable-diffusion.cpp accepted no image job ID.");
+  return {
+    jobId: accepted.id,
+    prompt,
+    seed,
+    generationSettings,
+    lifecycleStartedAt,
+    startedAt,
+  };
+}
+
+export async function completeSdcppVulkanImage(task: SdcppVulkanImageTask): Promise<GeneratedImage> {
+  const { jobId, prompt, seed, generationSettings, lifecycleStartedAt, startedAt } = task;
   const deadline = Date.now() + GENERATION_TIMEOUT_MS;
   let job: SdcppJob | null = null;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    job = await getJob(accepted.id);
+    job = await getJob(jobId);
     if (["failed", "error", "cancelled"].includes((job.status || "").toLowerCase())) {
       const error = typeof job.error === "string" ? job.error : job.error?.message;
       throw new Error(error || "stable-diffusion.cpp could not generate this image. You can retry from the passage.");
@@ -177,12 +226,12 @@ export async function generateSdcppVulkanImage(options: {
   }
 
   let outputBytes: Buffer;
-  if (metadata.width === IMAGE_WIDTH && metadata.height === ENGINE_HEIGHT) {
+  if (metadata.width === generationSettings.width && metadata.height === ENGINE_HEIGHT) {
     outputBytes = await sharp(sourceBytes)
-      .extract({ left: 0, top: 20, width: IMAGE_WIDTH, height: IMAGE_HEIGHT })
+      .extract({ left: 0, top: 20, width: generationSettings.width, height: IMAGE_HEIGHT })
       .png()
       .toBuffer();
-  } else if (metadata.width === IMAGE_WIDTH && metadata.height === IMAGE_HEIGHT) {
+  } else if (metadata.width === generationSettings.width && metadata.height === IMAGE_HEIGHT) {
     outputBytes = sourceBytes;
   } else {
     throw new Error(`The renderer returned ${metadata.width}×${metadata.height}; expected 960×576 before crop.`);
@@ -206,12 +255,24 @@ export async function generateSdcppVulkanImage(options: {
     mode: "fast",
     backend: "sd-cpp-vulkan",
     aspect: "landscape",
-    width: IMAGE_WIDTH,
+    width: generationSettings.width,
     height: IMAGE_HEIGHT,
     elapsedSeconds: Math.round((Date.now() - startedAt) / 100) / 10,
     seed,
+    generationSettings,
     warnings: Date.now() - lifecycleStartedAt > 30_000 ? ["Image backend startup was unusually slow."] : undefined,
   };
+}
+
+export async function generateSdcppVulkanImage(options: {
+  scenePrompt?: string;
+  characters?: StoryCharacter[];
+  prompt?: string;
+  seed?: number;
+  generationSettings?: ImageGenerationSettings;
+}): Promise<GeneratedImage> {
+  const task = await submitSdcppVulkanImage(options);
+  return completeSdcppVulkanImage(task);
 }
 
 export function discardGeneratedImage(url: string) {

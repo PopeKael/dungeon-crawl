@@ -9,23 +9,41 @@ prepares the renderer before opening the story app and shuts it down with the
 other Dungeon workloads.
 
 Automatic story images are enabled by default and can be disabled in the Images
-panel. The narrator now compares each new beat with the last requested image,
-including how many narrated passages have followed it. The target cadence is
-one image every 2–4 passages when the view changes, with an immediate request
-for a distinct location, major reveal, dramatic entrance, time/weather change,
-or new action phase. Ordinary dialogue and small movements in the same view
-remain unillustrated. This cadence is guidance to the narrator, not a hard
-timer: the model still decides whether the visual meaningfully changed.
+panel. The narrator compares each new beat with the last requested image,
+including how many narrated passages have followed it. A distinct location or
+clearly new visual scene gets an image immediately, regardless of how recently
+the last image was made. This includes a major reveal, dramatic entrance,
+meaningful time/weather change, or new action phase. In the same scene,
+dialogue and small movements do not get images; after at least two passages,
+another image is requested only when the visible tableau has materially
+changed. Passage count alone is never a trigger. The narrator requests at most
+one image per turn. It writes the visible passage first, then bases any image
+prompt on the scene shown in that passage. The previous image is used only for
+comparison, so details from a departed location should not carry into the new
+scene.
 
-Image prompts are tuned for the four-step SDXL-Lightning checkpoint: one frozen
-moment in 35–70 words, with a clear subject/action, foreground-to-background
-composition, lighting and mood. The prompt should depict a single scene rather
-than summarizing the passage or combining sequential events. Dungeon saves the
-hidden request against its assistant passage and dispatches it as soon as it
-arrives; visible narration continues while the renderer works. The passage
-shows a placeholder, then the resulting PNG. The image and request remain
-linked in saved story context, and a failed image can be retried from the
-passage.
+Image prompts are tuned for the four-step SDXL-Lightning checkpoint. Each
+storyboard prompt is 35–70 words describing one frozen moment, in this order:
+subject and action; composition and placement of characters and important
+objects; two or three distinctive setting details; shot type and viewing angle;
+then lighting, mood, and cinematic storybook style. Use clear, positive visual
+descriptions, prioritise the main action, and avoid unnecessary complexity.
+Canonical saved character details are appended separately. The prompt should
+depict one scene rather than summarising the passage or combining sequential
+events. Once narration is complete and saved, the browser starts an independent
+`/api/images` request. A separate history-free translation request uses the
+saved passage as the source of truth and corrects stale or conflicting details
+in the candidate storyboard. The story response closes before image rendering
+starts, so rendering cannot hold narration deltas or the turn's busy state. The
+passage shows a placeholder, then the resulting PNG. The image and request
+remain linked in saved story context, and a failed image can be retried from
+the passage.
+
+For timing diagnosis, the server logs correlated `[dungeon-story-stream]` and
+`[dungeon-image-job]` events, while the browser console logs
+`[dungeon-story-ui]` events. These include first narration delta received and
+painted, passage persistence, story stream close, image fetch start, and image
+completion. They contain timing and event metadata, not story text or prompts.
 
 The tested settings are 960×536 landscape, Euler, `sgm_uniform`, 4 steps,
 CFG 1.0, and a 6 GiB managed Vulkan budget. While `qwen3.5:4b` remained resident

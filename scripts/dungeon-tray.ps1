@@ -399,6 +399,17 @@ try {
     if ($ShowStatus) { Show-DungeonStatus }
     [Windows.Forms.Application]::Run($context)
 } finally {
+    # The tray is the user's lifecycle control surface. If its message loop
+    # returns without the explicit Exit path, release Dungeon-owned processes
+    # rather than leave a live web app with no tray control.
+    if (-not $script:exitInProgress) {
+        try {
+            Add-Content -LiteralPath (Join-Path $logDirectory 'launcher-tray.log') -Value ("{0:o} Tray loop returned unexpectedly; stopping Dungeon-owned workloads." -f [DateTime]::UtcNow)
+            Exit-DungeonLauncher
+        } catch {
+            try { Add-Content -LiteralPath (Join-Path $logDirectory 'launcher-exit.log') -Value ("{0:o} Tray fallback shutdown failed: {1}" -f [DateTime]::UtcNow, $_.Exception.ToString()) } catch { }
+        }
+    }
     try { Add-Content -LiteralPath (Join-Path $logDirectory 'launcher-tray.log') -Value ("{0:o} Tray loop exiting; operation={1}; workerPid={2}" -f [DateTime]::UtcNow, $script:operation, $(if ($script:worker) { $script:worker.Id } else { 'none' })) } catch { }
     $timer.Stop(); $timer.Dispose(); $tray.Visible = $false; $tray.Dispose(); $menu.Dispose(); $context.Dispose()
     $control.Dispose(); $statusEvent.Dispose(); $openEvent.Dispose(); $mutex.ReleaseMutex(); $mutex.Dispose()

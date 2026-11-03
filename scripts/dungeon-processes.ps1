@@ -23,6 +23,10 @@ function Get-DungeonOwnedProcess([string]$StatePath) {
     $created = if ($state.Created -is [DateTime]) { $state.Created.ToUniversalTime().ToString('o') } else { [string]$state.Created }
     $actualCreated = $process.StartTime.ToUniversalTime().ToString('o')
     $actualPath = $process.Path
+    if ([string]::IsNullOrWhiteSpace([string]$actualPath)) {
+        $metadata = Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$process.Id)" -ErrorAction SilentlyContinue
+        $actualPath = [string]$metadata.ExecutablePath
+    }
     if ($actualCreated -ne $created -or $actualPath -ne $state.ExecutablePath) {
         throw 'The saved PID now belongs to a different process. It will not be stopped.'
     }
@@ -34,8 +38,16 @@ function Save-DungeonOwnedProcess($Child, [string]$StatePath, [string]$CommandLi
     try {
         $identity = Get-Process -Id $Child.Id -ErrorAction Stop
         if (-not $identity) { throw 'The application process exited before it could be registered.' }
+        $executablePath = $identity.Path
+        if ([string]::IsNullOrWhiteSpace([string]$executablePath)) {
+            $metadata = Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$Child.Id)" -ErrorAction SilentlyContinue
+            $executablePath = [string]$metadata.ExecutablePath
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$executablePath)) {
+            throw 'Windows did not provide the executable path needed to manage this process safely.'
+        }
         if (-not $CommandLine) { $CommandLine = @($Child.StartInfo.FileName, $Child.StartInfo.Arguments) -join ' ' }
-        @{ ProcessId = $Child.Id; Created = $identity.StartTime.ToUniversalTime().ToString('o'); CommandLine = $CommandLine; ExecutablePath = $identity.Path } |
+        @{ ProcessId = $Child.Id; Created = $identity.StartTime.ToUniversalTime().ToString('o'); CommandLine = $CommandLine; ExecutablePath = $executablePath } |
             ConvertTo-Json | Set-Content -LiteralPath $StatePath
     } catch {
         # This is the just-created process object, never a port-based guess.

@@ -124,7 +124,7 @@ const generateImageTool = {
   function: {
     name: "generate_image",
     description:
-      "Request one image when the story reaches a materially new visual scene. Illustrate major location/reveal/action changes immediately; between them, aim for one image every 2–4 passages when the view changes. Do not image every turn or repeat the previous composition.",
+      "After writing the visible passage, request one image for a distinct location or clearly new visual scene shown in that passage, regardless of how recently the last image was made. Base the prompt on the completed passage, not the previous scene or a future action. In the same scene, request another only after at least two narrated passages and a materially changed tableau. Dialogue, small movements, or passage count alone are not reasons. Never repeat the previous composition; at most one image per turn.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -132,7 +132,7 @@ const generateImageTool = {
         prompt: {
           type: "string",
           description:
-            "Write 35–70 words describing one frozen moment: subject and action, foreground/midground/background, wide composition, lighting and mood. Keep it concrete and visually distinct from the prior image; no sequential events or text. Dungeon Crawl appends canonical saved character appearance and clothing.",
+            "Write a 35–70-word storyboard prompt for one frozen moment, in this order: (1) subject and action, (2) composition and positions of characters/important objects, (3) two or three distinctive setting details, (4) shot type and viewing angle, (5) lighting, mood, and cinematic storybook style. Use clear, positive visual descriptions; prioritise the main action and avoid unnecessary complexity, sequential events, or text. Do not repeat canonical character details; Dungeon Crawl appends them separately.",
         },
         reason: {
           type: "string",
@@ -1149,11 +1149,22 @@ export async function POST(request: Request) {
   };
 
   if (body.stream) {
-    // NDJSON sends an image-request event as soon as the complete hidden tool
-    // call arrives, then visible delta chunks and a final persisted message.
+    // Narration and image work use separate HTTP requests. Keep this stream
+    // alive only through the saved passage, never through Vulkan rendering.
     const encoder = new TextEncoder();
     const filter = createStreamingArtifactFilter();
+    const traceId = crypto.randomUUID();
+    const startedAt = performance.now();
     let cancelled = false;
+    let firstDeltaLogged = false;
+    const logTiming = (event: string, details: Record<string, unknown> = {}) => {
+      console.info("[dungeon-story-stream]", JSON.stringify({
+        traceId,
+        event,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        ...details,
+      }));
+    };
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -1162,10 +1173,19 @@ export async function POST(request: Request) {
             return;
           }
           try {
-            controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+            controller.enqueue(encoder.encode(`${JSON.stringify({ ...event, traceId })}\n`));
           } catch {
             cancelled = true;
           }
+        };
+        const forwardStoryDelta = (text: string) => {
+          const visible = filter.push(text);
+          if (!visible) return;
+          if (!firstDeltaLogged) {
+            firstDeltaLogged = true;
+            logTiming("first_narration_delta", { characters: visible.length });
+          }
+          send({ type: "delta", text: visible });
         };
 
         const captureImageRequest: ToolCallHandler = (calls) => {
@@ -1180,6 +1200,9 @@ export async function POST(request: Request) {
             imageRequest,
           };
           if (body.chatId) addMessage(body.chatId, earlyImageMessage);
+          logTiming("image_request_captured", {
+            selectedCharacterCount: imageRequest.characterIds?.length || 0,
+          });
           send({
             type: "image-request",
             id: earlyImageMessage.id,
@@ -1188,17 +1211,13 @@ export async function POST(request: Request) {
         };
 
         void (async () => {
+          logTiming("story_request_started", { imageToolEnabled: includeImageTool });
           try {
             const firstResult = await requestStoryMessage(
               body.settings,
               messages,
               includeImageTool,
-              (text) => {
-                const visible = filter.push(text);
-                if (visible) {
-                  send({ type: "delta", text: visible });
-                }
-              },
+              forwardStoryDelta,
               captureImageRequest,
             );
             let message = firstResult.message;
@@ -1209,6 +1228,7 @@ export async function POST(request: Request) {
                 error?: string;
                 detail?: unknown;
               } | null;
+              logTiming("story_upstream_error", { status: error.status });
               send({
                 type: "error",
                 error: payload?.error || "Story request failed.",
@@ -1218,28 +1238,26 @@ export async function POST(request: Request) {
             }
 
             // Some tool-capable models end their response at the tool call.
-            // Continue narration in a second streamed response while the
-            // browser renders the image requested above.
+            // Finish the visible passage first so translation can anchor the
+            // candidate storyboard to the scene the player actually receives.
             if (earlyImageMessage && !extractStoryText(message?.content)) {
               const continuation: OpenRouterMessage = {
                 role: "system",
                 content:
-                  "The hidden illustration request has been saved and dispatched. Continue by writing the visible story passage for this turn. Do not request another image or mention image generation.",
+                  "The hidden illustration request has been handled separately. Continue by writing the visible story passage for this turn. Do not request another image or mention image generation.",
               };
               const continued = await requestStoryMessage(
                 body.settings,
                 [...messages, continuation],
                 false,
-                (text) => {
-                  const visible = filter.push(text);
-                  if (visible) send({ type: "delta", text: visible });
-                },
+                forwardStoryDelta,
               );
               if (continued.error) {
                 const payload = (await continued.error.json().catch(() => null)) as {
                   error?: string;
                   detail?: unknown;
                 } | null;
+                logTiming("story_continuation_error", { status: continued.error.status });
                 send({
                   type: "error",
                   error: payload?.error || "Story continuation failed.",
@@ -1252,6 +1270,10 @@ export async function POST(request: Request) {
 
             const trailing = filter.flush();
             if (trailing) {
+              if (!firstDeltaLogged) {
+                firstDeltaLogged = true;
+                logTiming("first_narration_delta", { characters: trailing.length });
+              }
               send({ type: "delta", text: trailing });
             }
 
@@ -1261,6 +1283,10 @@ export async function POST(request: Request) {
               return;
             }
 
+            logTiming("passage_persisted", {
+              characters: result.assistantMessage.content.length,
+              imageRequested: Boolean(result.assistantMessage.imageRequest?.needed),
+            });
             send({
               type: "done",
               id: result.assistantMessage.id,
@@ -1268,6 +1294,9 @@ export async function POST(request: Request) {
               imageRequest: result.assistantMessage.imageRequest,
             });
           } catch (streamFailure) {
+            logTiming("story_request_failed", {
+              errorType: streamFailure instanceof Error ? streamFailure.name : "unknown",
+            });
             send({
               type: "error",
               error:
@@ -1277,6 +1306,7 @@ export async function POST(request: Request) {
             if (!cancelled) {
               try {
                 controller.close();
+                logTiming("story_stream_closed");
               } catch {
                 // The client went away first; nothing left to close cleanly.
               }
@@ -1286,6 +1316,7 @@ export async function POST(request: Request) {
       },
       cancel() {
         cancelled = true;
+        logTiming("story_stream_cancelled");
       },
     });
 
